@@ -60,7 +60,7 @@ def main() -> None:
     model_name = "Qwen/Qwen2.5-0.5B"
     train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
     validation_path = "data/raw/eli5_qa_danish/validation" # Update this path if necessary
-    batch_size = 2
+    batch_size = 16
     num_epochs = 10  # Adjust as needed
     learning_rate = 1e-5
     weight_decay = 0.01
