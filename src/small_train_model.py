@@ -24,6 +24,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,  # Optional: For alternative scheduler
 )
 from datasets import load_from_disk
 from tqdm import tqdm
@@ -52,13 +53,14 @@ train_path = "data/raw/eli5_qa_danish/train"          # Update this path if nece
 validation_path = "data/raw/eli5_qa_danish/validation"  # Update this path if necessary
 output_dir = "./qwen2.5-0.5B-danish-pytorch-test"
 batch_size = 2
-num_epochs = 1  # Only one epoch for testing
+num_epochs = 3  # Increased for better training monitoring
 learning_rate = 1e-5  # Lowered learning rate
 weight_decay = 0.01
-max_length = 512  # Maximum token length
-gradient_accumulation_steps = 1  # No accumulation for testing
-fp16 = False  # Disable mixed precision for testing
+max_length = 256  # Reduced from 512 for faster training
+gradient_accumulation_steps = 4  # To simulate larger batch size
+fp16 = True  # Enable mixed precision for speed
 max_grad_norm = 1.0  # Gradient clipping
+num_workers = 4  # DataLoader workers
 
 # Create output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
@@ -221,106 +223,175 @@ train_loader = DataLoader(
     tokenized_train_dataset,
     batch_size=batch_size,
     shuffle=True,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    num_workers=num_workers
 )
 
-print(f"\nCreated DataLoader with batch size {batch_size}.")
+print(f"\nCreated DataLoader with batch size {batch_size} and {num_workers} workers.")
 
 # ------------------------------
 # 8. Initialize Optimizer and Scheduler
 # ------------------------------
 
 # Calculate total training steps
-total_steps = len(train_loader) * num_epochs // gradient_accumulation_steps
+total_steps = (len(train_loader) // gradient_accumulation_steps) * num_epochs
 
 # Initialize the optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
 # Initialize the learning rate scheduler
+# You can choose between linear or cosine scheduler
 scheduler = get_linear_schedule_with_warmup(
     optimizer,
     num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
     num_training_steps=total_steps
 )
 
+# Alternatively, use cosine scheduler
+# scheduler = get_cosine_schedule_with_warmup(
+#     optimizer,
+#     num_warmup_steps=total_steps // 10,
+#     num_training_steps=total_steps
+# )
+
 # Initialize GradScaler if using mixed precision
 if fp16:
-    scaler = torch.amp.GradScaler(enabled=fp16)
+    scaler = torch.cuda.amp.GradScaler(enabled=fp16)
 else:
     scaler = None
 
 # ------------------------------
-# 9. Define Training Steps
+# 9. Define Evaluation Function
 # ------------------------------
 
-def run_training_steps(model, loader, optimizer, scheduler, scaler, device, num_steps=10):
+def evaluate(model, tokenizer, device, prompts, max_length=256):
     """
-    Runs a specified number of training steps to test the training loop.
+    Generates responses for a list of prompts and prints them.
+    """
+    model.eval()
+    responses = []
+    with torch.no_grad():
+        for prompt in prompts:
+            input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+            output_ids = model.generate(
+                input_ids,
+                max_length=max_length,
+                num_beams=5,
+                early_stopping=True,
+                pad_token_id=tokenizer.pad_token_id
+            )
+            response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            responses.append(response)
+    model.train()
+    return responses
+
+# ------------------------------
+# 10. Prepare Evaluation Prompts
+# ------------------------------
+
+# Example Danish question prompts
+evaluation_prompts = [
+    "<|user|>Hvordan laver jeg en kop kaffe?<|end_of_turn|>",
+    "<|user|>Hvad er meningen med livet?<|end_of_turn|>",
+    "<|user|>Kan du forklare kvantemekanik?<|end_of_turn|>",
+    # Add more prompts as needed
+]
+
+# ------------------------------
+# 11. Modify Training Function to Include Evaluation and Checkpointing
+# ------------------------------
+
+def run_training_steps(model, loader, optimizer, scheduler, scaler, device, num_epochs=1, num_steps_per_epoch=None):
+    """
+    Runs the training loop with evaluation and checkpointing.
     """
     model.train()
-    print("\nStarting training steps...")
+    print("\nStarting training...")
 
-    for step, batch in enumerate(tqdm(loader, desc="Training Steps")):
-        if step >= num_steps:
-            break
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+        epoch_loss = 0
+        for step, batch in enumerate(tqdm(loader, desc=f"Epoch {epoch + 1}")):
+            if num_steps_per_epoch and step >= num_steps_per_epoch:
+                break
 
-        # Forward pass
-        if fp16:
-            with torch.cuda.amp.autocast(device_type='cuda', enabled=fp16):
+            # Forward pass
+            if fp16:
+                with torch.cuda.amp.autocast():
+                    outputs = model(
+                        input_ids=batch['input_ids'],
+                        attention_mask=batch['attention_mask'],
+                        labels=batch['labels']
+                    )
+                    loss = outputs.loss
+            else:
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
                     labels=batch['labels']
                 )
                 loss = outputs.loss
-        else:
-            outputs = model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                labels=batch['labels']
-            )
-            loss = outputs.loss
 
-        # Check if loss is nan
-        if torch.isnan(loss):
-            print(f"Step {step}: Loss is nan. Exiting training.")
-            return
+            # Check if loss is nan
+            if torch.isnan(loss):
+                print(f"Epoch {epoch + 1}, Step {step}: Loss is nan. Exiting training.")
+                return
 
-        # Backward pass
-        if fp16:
-            scaler.scale(loss).backward()
-        else:
-            loss.backward()
+            # Backward pass
+            if fp16:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
-        # Gradient clipping
-        if scaler:
-            scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            # Gradient clipping
+            if scaler:
+                scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
-        # Optimizer step
-        if fp16:
-            scaler.step(optimizer)
-            scaler.update()
-        else:
-            optimizer.step()
+            # Optimizer step with gradient accumulation
+            if (step + 1) % gradient_accumulation_steps == 0:
+                if fp16:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-        # Scheduler step
-        scheduler.step()
+            # Accumulate loss
+            epoch_loss += loss.item()
 
-        # Zero gradients
-        optimizer.zero_grad()
+            # Log loss every 10 steps
+            if (step + 1) % 10 == 0:
+                avg_loss = epoch_loss / (step + 1)
+                print(f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}")
 
-        # Log loss
-        print(f"Step {step + 1}: Loss = {loss.item():.4f}")
+        # After each epoch, evaluate the model
+        print("\nEvaluating the model with Danish prompts...")
+        responses = evaluate(model, tokenizer, device, evaluation_prompts)
+        for prompt, response in zip(evaluation_prompts, responses):
+            print(f"\nPrompt: {prompt}\nResponse: {response}")
 
-    print("Training steps completed successfully without encountering nan losses.")
+        # Save a checkpoint after each epoch
+        checkpoint_path = os.path.join(output_dir, f"checkpoint-epoch-{epoch + 1}")
+        model.save_pretrained(checkpoint_path)
+        tokenizer.save_pretrained(checkpoint_path)
+        print(f"\nSaved model checkpoint to {checkpoint_path}")
+
+    # Save the final model
+    final_model_path = os.path.join(output_dir, "final-model")
+    model.save_pretrained(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    print(f"\nSaved final model to {final_model_path}")
+
+    print("\nTraining completed successfully.")
 
 # ------------------------------
-# 10. Run the Test
+# 12. Run the Test
 # ------------------------------
 
 if __name__ == "__main__":
-    # Run a limited number of training steps to test
+    # Run the training with the enhanced training loop
     run_training_steps(
         model=model,
         loader=train_loader,
@@ -328,7 +399,8 @@ if __name__ == "__main__":
         scheduler=scheduler,
         scaler=scaler,
         device=device,
-        num_steps=10  # Number of steps to run for testing
+        num_epochs=num_epochs,  # Number of epochs
+        num_steps_per_epoch=None  # Set to limit steps per epoch if needed
     )
 
     print("\nTest script completed.")

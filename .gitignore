@@ -3,9 +3,9 @@
 # Ignore everything in the data directory
 /data
 
+*qwen2.5*
 
-
-
+*danish-pytorch-test*
 
 # default:
 
@@ -53,6 +53,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

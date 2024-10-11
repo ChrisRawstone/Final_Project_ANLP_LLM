@@ -1,4 +1,22 @@
-# Import necessary libraries
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+train_model.py
+
+A script to train a causal language model on Danish question-answering data.
+Includes data preprocessing, training loop with evaluation, learning rate scheduling, and model checkpointing.
+
+Usage:
+    python train_model.py
+
+Ensure that the required datasets are available at the specified paths.
+"""
+
+# ------------------------------
+# 1. Imports and Configuration
+# ------------------------------
+
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -6,15 +24,18 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup,
+    get_cosine_schedule_with_warmup,  # Optional: For alternative scheduler
 )
 from datasets import load_from_disk
 from tqdm import tqdm
-import torch.nn.functional as F
 import random
 import numpy as np
 
+# Suppress tokenizer parallelism warning
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # ------------------------------
-# 1. Setup and Configuration
+# 2. Setup and Configuration
 # ------------------------------
 
 # Set random seeds for reproducibility
@@ -31,48 +52,42 @@ print(f"Using device: {device}")
 
 # Configuration parameters
 model_name = "Qwen/Qwen2.5-0.5B"
-train_path = "data/raw/eli5_qa_danish/train"
-validation_path = "data/raw/eli5_qa_danish/validation"
-output_dir = "./qwen2.5-0.5B-danish-pytorch"
+train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
+validation_path = "data/raw/eli5_qa_danish/validation"    # Update this path if necessary
+output_dir = "./qwen2.5-0.5B-danish-pytorch-test"
 batch_size = 2
-num_epochs = 3
-learning_rate = 1e-5  # Lowered learning rate
+num_epochs = 3  # Adjust as needed
+learning_rate = 1e-5
 weight_decay = 0.01
-max_length = 512  # Maximum token length
-save_steps = 10000
-eval_steps = 5000
-logging_steps = 500
-gradient_accumulation_steps = 1  # Adjust based on GPU memory
-fp16 = True  # Use mixed precision
-save_total_limit = 2
+max_length = 256  # Adjust based on your data
+gradient_accumulation_steps = 4
+fp16 = True  # Enable mixed precision
 max_grad_norm = 1.0  # Gradient clipping
+num_workers = 4  # DataLoader workers
 
 # Create output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
 
 # ------------------------------
-# 2. Data Loading and Preprocessing
+# 3. Load Tokenizer and Model
 # ------------------------------
 
-# Load the datasets from disk
-train_dataset = load_from_disk(train_path)
-validation_dataset = load_from_disk(validation_path)
-
-# Print dataset information
-print("train_dataset: \n", train_dataset)
-print("validation_dataset:\n", validation_dataset)
-
-# Load the tokenizer and model
+# Load the tokenizer
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-# **Add special tokens**
-special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
+# Add special tokens
+special_tokens_dict = {
+    'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']
+}
 num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-print(f"Added {num_added_toks} special tokens.")
+print(f"Added {num_added_toks} special tokens to the tokenizer.")
 
-# Load the model and resize embeddings
+# Load the model
 model = AutoModelForCausalLM.from_pretrained(model_name)
+
+# Resize model embeddings to accommodate new tokens
 model.resize_token_embeddings(len(tokenizer))
+print(f"Resized model embeddings to {len(tokenizer)} tokens.")
 
 model.to(device)
 
@@ -80,17 +95,50 @@ model.to(device)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-# Preprocessing function to tokenize the data and create labels
+# ------------------------------
+# 4. Load and Inspect Data
+# ------------------------------
+
+# Load the datasets from disk
+print("Loading datasets...")
+train_dataset = load_from_disk(train_path)
+validation_dataset = load_from_disk(validation_path)
+
+# Print dataset information
+print("\ntrain_dataset: \n", train_dataset)
+print("\nvalidation_dataset:\n", validation_dataset)
+
+# Select a small subset for testing (e.g., first 1000 examples)
+test_subset_size = 1000
+small_train_dataset = train_dataset.select(range(test_subset_size))
+print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
+
+# ------------------------------
+# 5. Preprocessing Function
+# ------------------------------
+
 def preprocess_function(examples):
+    """
+    Preprocesses the dataset by constructing prompts, tokenizing, and aligning labels.
+    Only the assistant's response is used as labels; the rest are ignored (-100).
+    """
     inputs = []
     labels = []
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
+
     for query, passage in zip(examples['query'], examples['passage']):
         # Construct the prompt
         prompt = f"<|user|>{query}<|end_of_turn|><|assistant|>{passage}<|end_of_turn|>"
+
         # Tokenize the prompt
-        tokenized = tokenizer(prompt, truncation=True, max_length=max_length, padding=False)
+        tokenized = tokenizer(
+            prompt,
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+            return_attention_mask=True
+        )
         input_ids = tokenized['input_ids']
         attention_mask = tokenized['attention_mask']
 
@@ -105,8 +153,7 @@ def preprocess_function(examples):
         except ValueError:
             # Assistant token not found
             missing_assistant_token += 1
-            # You can decide how to handle this case
-            labels_ids = [-100] * len(input_ids)
+            # All labels remain -100, meaning this example will be ignored in loss computation
 
         inputs.append({
             'input_ids': input_ids,
@@ -114,8 +161,9 @@ def preprocess_function(examples):
         })
         labels.append(labels_ids)
 
-    # Optional: Log the number of examples where the assistant token was not found
-    print(f"Number of examples where assistant token was not found: {missing_assistant_token}")
+    # Log the number of examples where the assistant token was not found
+    if missing_assistant_token > 0:
+        print(f"Number of examples where assistant token was not found: {missing_assistant_token}")
 
     return {
         'input_ids': [x['input_ids'] for x in inputs],
@@ -123,30 +171,36 @@ def preprocess_function(examples):
         'labels': labels
     }
 
-# Apply the preprocessing function to the datasets
-print("Tokenizing the training dataset...")
-tokenized_train_dataset = train_dataset.map(
+# ------------------------------
+# 6. Apply Preprocessing
+# ------------------------------
+
+print("\nPreprocessing the small training dataset...")
+tokenized_train_dataset = small_train_dataset.map(
     preprocess_function,
     batched=True,
-    remove_columns=train_dataset.column_names,
+    remove_columns=small_train_dataset.column_names
 )
 
-print("Tokenizing the validation dataset...")
-tokenized_validation_dataset = validation_dataset.map(
-    preprocess_function,
-    batched=True,
-    remove_columns=validation_dataset.column_names,
-)
+# Check how many examples have valid labels
+valid_examples = [label for label in tokenized_train_dataset['labels'] if any(l != -100 for l in label)]
+print(f"Number of valid examples with labels: {len(valid_examples)} out of {test_subset_size}")
 
-# Filter out examples where the assistant token was not found
+# Optionally, filter out examples where labels are all -100
 def filter_empty_labels(example):
     return any(label != -100 for label in example['labels'])
 
 tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
-tokenized_validation_dataset = tokenized_validation_dataset.filter(filter_empty_labels)
+print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
-# Define a custom collate function to handle dynamic padding
+# ------------------------------
+# 7. Create DataLoader
+# ------------------------------
+
 def collate_fn(batch):
+    """
+    Custom collate function to handle dynamic padding for variable-length sequences.
+    """
     input_ids = [torch.tensor(example['input_ids']) for example in batch]
     attention_masks = [torch.tensor(example['attention_mask']) for example in batch]
     labels = [torch.tensor(example['labels']) for example in batch]
@@ -162,32 +216,28 @@ def collate_fn(batch):
     )
 
     return {
-        'input_ids': input_ids_padded.to(device),
-        'attention_mask': attention_masks_padded.to(device),
-        'labels': labels_padded.to(device),
+        'input_ids': input_ids_padded,
+        'attention_mask': attention_masks_padded,
+        'labels': labels_padded,
     }
 
-# Create DataLoaders
+# Create DataLoader for the small subset
 train_loader = DataLoader(
     tokenized_train_dataset,
     batch_size=batch_size,
     shuffle=True,
-    collate_fn=collate_fn
+    collate_fn=collate_fn,
+    num_workers=num_workers
 )
 
-validation_loader = DataLoader(
-    tokenized_validation_dataset,
-    batch_size=batch_size,
-    shuffle=False,
-    collate_fn=collate_fn
-)
+print(f"\nCreated DataLoader with batch size {batch_size} and {num_workers} workers.")
 
 # ------------------------------
-# 3. Optimizer and Scheduler Setup
+# 8. Initialize Optimizer and Scheduler
 # ------------------------------
 
 # Calculate total training steps
-total_steps = len(train_loader) * num_epochs // gradient_accumulation_steps
+total_steps = (len(train_loader) // gradient_accumulation_steps) * num_epochs
 
 # Initialize the optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
@@ -199,108 +249,164 @@ scheduler = get_linear_schedule_with_warmup(
     num_training_steps=total_steps
 )
 
-# Initialize mixed precision scaler using the updated API
-scaler = torch.amp.GradScaler(enabled=fp16)
+# Initialize GradScaler if using mixed precision
+if fp16:
+    scaler = torch.amp.GradScaler(enabled=fp16)
+else:
+    scaler = None
 
 # ------------------------------
-# 4. Evaluation Function
+# 9. Define Evaluation Function
 # ------------------------------
 
-def evaluate(model, dataloader):
+def evaluate(model, tokenizer, device, prompts, max_length=256):
+    """
+    Generates responses for a list of prompts and prints them.
+    """
     model.eval()
-    total_loss = 0
+    responses = []
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
-            with torch.amp.autocast(device_type='cuda', enabled=fp16):
+        for prompt in prompts:
+            input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+            output_ids = model.generate(
+                input_ids,
+                max_length=max_length,
+                num_beams=5,
+                early_stopping=True,
+                pad_token_id=tokenizer.pad_token_id
+            )
+            response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            responses.append(response)
+    model.train()
+    return responses
+
+# ------------------------------
+# 10. Prepare Evaluation Prompts
+# ------------------------------
+
+# Example Danish question prompts
+evaluation_prompts = [
+    "<|user|>Hvordan laver jeg en kop kaffe?<|end_of_turn|>",
+    "<|user|>Hvad er meningen med livet?<|end_of_turn|>",
+    "<|user|>Kan du forklare kvantemekanik?<|end_of_turn|>",
+    # Add more prompts as needed
+]
+
+# ------------------------------
+# 11. Define Training Function with Evaluation and Checkpointing
+# ------------------------------
+
+def run_training_steps(model, loader, optimizer, scheduler, scaler, device, num_epochs=3, num_steps_per_epoch=None):
+    """
+    Runs the training loop with evaluation and checkpointing.
+    """
+    model.train()
+    print("\nStarting training...")
+
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+        epoch_loss = 0.0
+        optimizer.zero_grad()
+
+        for step, batch in enumerate(tqdm(loader, desc=f"Epoch {epoch + 1}")):
+            if num_steps_per_epoch and step >= num_steps_per_epoch:
+                break
+
+            # Move batch to device
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            # Forward pass
+            with torch.autocast(device_type=device.type, enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
                     labels=batch['labels']
                 )
                 loss = outputs.loss
-                total_loss += loss.item()
-    avg_loss = total_loss / len(dataloader)
-    return avg_loss
+                loss = loss / gradient_accumulation_steps  # Normalize loss
 
-# ------------------------------
-# 5. Training Loop
-# ------------------------------
+            # Check if loss is nan
+            if torch.isnan(loss):
+                print(f"Epoch {epoch + 1}, Step {step + 1}: Loss is nan. Exiting training.")
+                return
 
-global_step = 0
-best_eval_loss = float('inf')
-steps_since_last_save = 0
+            # Backward pass
+            if fp16:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
 
-for epoch in range(num_epochs):
-    print(f"\nEpoch {epoch + 1}/{num_epochs}")
-    model.train()
-    epoch_loss = 0
-    progress_bar = tqdm(train_loader, desc="Training", leave=False)
-    for step, batch in enumerate(progress_bar):
-        with torch.amp.autocast(device_type='cuda', enabled=fp16):
-            outputs = model(
-                input_ids=batch['input_ids'],
-                attention_mask=batch['attention_mask'],
-                labels=batch['labels']
-            )
-            loss = outputs.loss
-            loss = loss / gradient_accumulation_steps
+            # Accumulate loss
+            epoch_loss += loss.item() * gradient_accumulation_steps  # Multiply back to original loss
 
-        # Backward pass with gradient scaling
-        scaler.scale(loss).backward()
+            # Optimizer step with gradient accumulation
+            if (step + 1) % gradient_accumulation_steps == 0:
+                if fp16:
+                    # Unscale gradients and clip
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    # Optimizer step
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-        epoch_loss += loss.item() * gradient_accumulation_steps
+            # Log loss every 10 steps
+            if (step + 1) % 10 == 0:
+                avg_loss = epoch_loss / ((step + 1) / gradient_accumulation_steps)
+                print(f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}")
 
-        if (step + 1) % gradient_accumulation_steps == 0:
-            # Gradient clipping to prevent exploding gradients
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-
-            # Optimizer step with scaled gradients
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
+        # Handle remaining gradients if steps are not divisible by gradient_accumulation_steps
+        if (step + 1) % gradient_accumulation_steps != 0:
+            if fp16:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                optimizer.step()
             scheduler.step()
-            global_step += 1
-            steps_since_last_save += 1
+            optimizer.zero_grad()
 
-            # Logging
-            if global_step % logging_steps == 0:
-                print(f"Step {global_step}: Loss = {loss.item() * gradient_accumulation_steps:.4f}")
+        # After each epoch, evaluate the model
+        print("\nEvaluating the model with Danish prompts...")
+        responses = evaluate(model, tokenizer, device, evaluation_prompts)
+        for prompt, response in zip(evaluation_prompts, responses):
+            print(f"\nPrompt: {prompt}\nResponse: {response}")
 
-            # Evaluation
-            if global_step % eval_steps == 0:
-                eval_loss = evaluate(model, validation_loader)
-                print(f"Evaluation at step {global_step}: Loss = {eval_loss:.4f}")
-                if eval_loss < best_eval_loss:
-                    best_eval_loss = eval_loss
-                    # Save the best model
-                    model.save_pretrained(os.path.join(output_dir, "best_model"))
-                    tokenizer.save_pretrained(os.path.join(output_dir, "best_model"))
-                    print(f"Best model saved at step {global_step}")
-                steps_since_last_save = 0
+        # Save a checkpoint after each epoch
+        checkpoint_path = os.path.join(output_dir, f"checkpoint-epoch-{epoch + 1}")
+        model.save_pretrained(checkpoint_path)
+        tokenizer.save_pretrained(checkpoint_path)
+        print(f"\nSaved model checkpoint to {checkpoint_path}")
 
-            # Saving the model periodically
-            if steps_since_last_save >= save_steps:
-                checkpoint_path = os.path.join(output_dir, f"checkpoint-{global_step}")
-                model.save_pretrained(checkpoint_path)
-                tokenizer.save_pretrained(checkpoint_path)
-                print(f"Checkpoint saved at step {global_step}")
-                steps_since_last_save = 0
+    # Save the final model
+    final_model_path = os.path.join(output_dir, "final-model")
+    model.save_pretrained(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
+    print(f"\nSaved final model to {final_model_path}")
 
-    avg_epoch_loss = epoch_loss / len(train_loader)
-    print(f"Epoch {epoch + 1} completed. Average Loss: {avg_epoch_loss:.4f}")
+    print("\nTraining completed successfully.")
 
-    # End of epoch evaluation
-    eval_loss = evaluate(model, validation_loader)
-    print(f"End of Epoch {epoch + 1}: Validation Loss = {eval_loss:.4f}")
-    if eval_loss < best_eval_loss:
-        best_eval_loss = eval_loss
-        # Save the best model
-        model.save_pretrained(os.path.join(output_dir, "best_model_epoch"))
-        tokenizer.save_pretrained(os.path.join(output_dir, "best_model_epoch"))
-        print(f"Best model updated at end of epoch {epoch + 1}")
+# ------------------------------
+# 12. Run the Training
+# ------------------------------
 
-# Save the final model
-model.save_pretrained(os.path.join(output_dir, "final_model"))
-tokenizer.save_pretrained(os.path.join(output_dir, "final_model"))
-print(f"Training completed. Final model saved at {os.path.join(output_dir, 'final_model')}")
+if __name__ == "__main__":
+    # Run the training with the enhanced training loop
+    run_training_steps(
+        model=model,
+        loader=train_loader,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        scaler=scaler,
+        device=device,
+        num_epochs=num_epochs,  # Number of epochs
+        num_steps_per_epoch=None  # Set to limit steps per epoch if needed
+    )
+
+    print("\nTraining script completed.")
