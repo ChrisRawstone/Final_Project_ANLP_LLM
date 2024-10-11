@@ -1,5 +1,3 @@
-# utils.py
-
 import os
 import torch
 from torch.utils.data import DataLoader
@@ -225,6 +223,8 @@ def evaluate(
                 num_return_sequences=1,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.2,       # Added repetition penalty
+                no_repeat_ngram_size=3,       # Prevent repeating n-grams of size 3
             )
             # Decode only the generated tokens
             generated_tokens = output_ids[0][input_ids.shape[-1]:]
@@ -296,7 +296,7 @@ def run_training_steps(
             batch = {k: v.to(device) for k, v in batch.items()}
 
             # Forward pass with autocast
-            with torch.autocast(device_type=device.type, enabled=fp16):
+            with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],

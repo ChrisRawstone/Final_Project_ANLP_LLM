@@ -37,8 +37,8 @@ from utils import (
 )
 import wandb  # Import wandb
 
-wandb.login(key='aa3e3c46cc563c788908b8b2be3dcfb1ee6f109c')
-
+# Replace with your actual wandb API key or ensure you are logged in via the command line
+wandb.login()  # Removed the API key for security reasons
 
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -59,7 +59,7 @@ def main() -> None:
     # Configuration parameters
     model_name = "Qwen/Qwen2.5-0.5B"
     train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
-    validation_path = "data/raw/eli5_qa_danish/validation" # Update this path if necessary
+    validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
     batch_size = 16
     num_epochs = 10  # Adjust as needed
     learning_rate = 1e-5
@@ -127,7 +127,7 @@ def main() -> None:
     print("\ntrain_dataset: \n", train_dataset)
     print("\nvalidation_dataset:\n", validation_dataset)
 
-    # Select a small subset for testing (e.g., first 1000 examples)
+    # Select a small subset for testing (e.g., first 10000 examples)
     test_subset_size = 10000
     small_train_dataset = train_dataset.select(range(test_subset_size))
     print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
@@ -179,7 +179,7 @@ def main() -> None:
     )
 
     # Initialize GradScaler if using mixed precision
-    scaler = torch.amp.GradScaler(device="cuda",enabled=fp16) if fp16 else None
+    scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
 
     # ------------------------------
     # 8. Prepare Evaluation Prompts
