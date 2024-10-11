@@ -53,8 +53,8 @@ print(f"Using device: {device}")
 # Configuration parameters
 model_name = "Qwen/Qwen2.5-0.5B"
 train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
-validation_path = "data/raw/eli5_qa_danish/validation"    # Update this path if necessary
-output_dir = "./qwen2.5-0.5B-danish-pytorch-test"
+validation_path = "data/raw/eli5_qa_danish/validation" # Update this path if necessary
+output_dir = "./models/initial_test/"
 batch_size = 2
 num_epochs = 3  # Adjust as needed
 learning_rate = 1e-5
@@ -249,6 +249,13 @@ scheduler = get_linear_schedule_with_warmup(
     num_training_steps=total_steps
 )
 
+# Alternatively, use cosine scheduler
+# scheduler = get_cosine_schedule_with_warmup(
+#     optimizer,
+#     num_warmup_steps=total_steps // 10,
+#     num_training_steps=total_steps
+# )
+
 # Initialize GradScaler if using mixed precision
 if fp16:
     scaler = torch.amp.GradScaler(enabled=fp16)
@@ -259,24 +266,33 @@ else:
 # 9. Define Evaluation Function
 # ------------------------------
 
-def evaluate(model, tokenizer, device, prompts, max_length=256):
+def evaluate(model, tokenizer, device, prompts, max_new_tokens=256):
     """
-    Generates responses for a list of prompts and prints them.
+    Generates responses for a list of prompts using sampling methods.
     """
     model.eval()
     responses = []
     with torch.no_grad():
         for prompt in prompts:
             input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+            attention_mask = (input_ids != tokenizer.pad_token_id).long()
+
             output_ids = model.generate(
-                input_ids,
-                max_length=max_length,
-                num_beams=5,
-                early_stopping=True,
-                pad_token_id=tokenizer.pad_token_id
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                do_sample=True,
+                top_p=0.9,
+                top_k=50,
+                temperature=0.8,
+                num_return_sequences=1,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
             )
-            response = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-            responses.append(response)
+            # Decode only the generated tokens
+            generated_tokens = output_ids[0][input_ids.shape[-1]:]
+            response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            responses.append(response.strip())
     model.train()
     return responses
 
@@ -315,7 +331,7 @@ def run_training_steps(model, loader, optimizer, scheduler, scaler, device, num_
             # Move batch to device
             batch = {k: v.to(device) for k, v in batch.items()}
 
-            # Forward pass
+            # Forward pass with autocast
             with torch.autocast(device_type=device.type, enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
