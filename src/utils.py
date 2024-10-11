@@ -260,10 +260,12 @@ def run_training_steps(
     gradient_accumulation_steps: int = 4,
     fp16: bool = True,
     max_grad_norm: float = 1.0,
-    num_steps_per_epoch: Optional[int] = None
+    num_steps_per_epoch: Optional[int] = None,
+    output_dir: str = "models/checkpoint"  # Added output_dir parameter
 ) -> None:
     """
     Runs the training loop with evaluation and wandb logging.
+    Saves the model after each epoch.
 
     Args:
         model (PreTrainedModel): The language model.
@@ -279,6 +281,7 @@ def run_training_steps(
         fp16 (bool, optional): Whether to use mixed precision. Defaults to True.
         max_grad_norm (float, optional): Maximum gradient norm for clipping. Defaults to 1.0.
         num_steps_per_epoch (Optional[int], optional): Limit steps per epoch. Defaults to None.
+        output_dir (str, optional): Directory to save the model checkpoints. Defaults to "models/checkpoint".
     """
     model.train()
     print("\nStarting training...")
@@ -296,7 +299,7 @@ def run_training_steps(
             batch = {k: v.to(device) for k, v in batch.items()}
 
             # Forward pass with autocast
-            with torch.cuda.amp.autocast(enabled=fp16):
+            with torch.amp.autocast(device_type="cuda",enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
@@ -373,7 +376,7 @@ def run_training_steps(
         for prompt, response in zip(evaluation_prompts, responses):
             print(f"\nPrompt: {prompt}\nResponse: {response}")
             table.add_data(prompt, response)
-        wandb.log({"evaluation_responses": table})
+
 
         # Log epoch metrics to wandb
         avg_epoch_loss = epoch_loss / (len(loader) / gradient_accumulation_steps)
@@ -381,7 +384,16 @@ def run_training_steps(
         wandb.log({
             'epoch': epoch + 1,
             'avg_epoch_loss': avg_epoch_loss,
-            'epoch_perplexity': epoch_perplexity
+            'epoch_perplexity': epoch_perplexity,
+            "evaluation_responses": table
         })
+
+        # Save the model and tokenizer after each epoch
+        epoch_output_dir = os.path.join(output_dir, f"epoch_{epoch + 1}")
+        os.makedirs(epoch_output_dir, exist_ok=True)
+        print(f"\nSaving model to {epoch_output_dir}...")
+        model.save_pretrained(epoch_output_dir)
+        tokenizer.save_pretrained(epoch_output_dir)
+        print(f"Model and tokenizer saved to {epoch_output_dir}.")
 
     print("\nTraining completed successfully.")

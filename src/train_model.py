@@ -5,7 +5,8 @@
 train_model.py
 
 A script to train a causal language model on Danish question-answering data.
-Includes data preprocessing, training loop with evaluation, learning rate scheduling, and logging with wandb.
+Includes data preprocessing, training loop with evaluation, learning rate scheduling,
+logging with wandb, and saving the model after each epoch.
 
 Usage:
     python train_model.py
@@ -62,17 +63,21 @@ def main() -> None:
     validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
     batch_size = 16
     num_epochs = 10  # Adjust as needed
-    learning_rate = 1e-5
+    learning_rate = 5e-5
     weight_decay = 0.01
     max_length = 256  # Adjust based on your data
     gradient_accumulation_steps = 4
     fp16 = True  # Enable mixed precision
     max_grad_norm = 1.0  # Gradient clipping
     num_workers = 4  # DataLoader workers
+    output_dir = "models/long_train"  # Directory to save models
+
+    # Create the output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
 
     # Initialize wandb
     wandb.init(
-        project="danish-small-LLM",
+        project="danish-qa-model",
         config={
             "model_name": model_name,
             "batch_size": batch_size,
@@ -85,7 +90,10 @@ def main() -> None:
             "max_grad_norm": max_grad_norm,
             "num_workers": num_workers,
             "seed": seed,
-        }
+            "output_dir": output_dir,
+        },
+        reinit=True
+
     )
 
     # ------------------------------
@@ -128,7 +136,7 @@ def main() -> None:
     print("\nvalidation_dataset:\n", validation_dataset)
 
     # Select a small subset for testing (e.g., first 10000 examples)
-    test_subset_size = 10000
+    test_subset_size = 1000
     small_train_dataset = train_dataset.select(range(test_subset_size))
     print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
 
@@ -179,7 +187,7 @@ def main() -> None:
     )
 
     # Initialize GradScaler if using mixed precision
-    scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
+    scaler = torch.amp.GradScaler(device="cuda",enabled=fp16) if fp16 else None
 
     # ------------------------------
     # 8. Prepare Evaluation Prompts
@@ -211,7 +219,8 @@ def main() -> None:
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        num_steps_per_epoch=None  # Set to limit steps per epoch if needed
+        num_steps_per_epoch=None,  # Set to limit steps per epoch if needed
+        output_dir=output_dir        # Pass the output directory for saving models
     )
 
     print("\nTraining script completed.")
