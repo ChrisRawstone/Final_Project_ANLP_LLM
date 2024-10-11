@@ -36,14 +36,14 @@ validation_path = "data/raw/eli5_qa_danish/validation"
 output_dir = "./qwen2.5-0.5B-danish-pytorch"
 batch_size = 2
 num_epochs = 3
-learning_rate = 1e-5  # Lowered from 5e-5
+learning_rate = 1e-5  # Lowered learning rate
 weight_decay = 0.01
 max_length = 512  # Maximum token length
 save_steps = 10000
 eval_steps = 5000
 logging_steps = 500
 gradient_accumulation_steps = 1  # Adjust based on GPU memory
-fp16 = True  # Use mixed precision, set to False to disable
+fp16 = True  # Use mixed precision
 save_total_limit = 2
 max_grad_norm = 1.0  # Gradient clipping
 
@@ -64,7 +64,16 @@ print("validation_dataset:\n", validation_dataset)
 
 # Load the tokenizer and model
 tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+# **Add special tokens**
+special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
+num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+print(f"Added {num_added_toks} special tokens.")
+
+# Load the model and resize embeddings
 model = AutoModelForCausalLM.from_pretrained(model_name)
+model.resize_token_embeddings(len(tokenizer))
+
 model.to(device)
 
 # Ensure the tokenizer uses the special tokens
@@ -75,8 +84,10 @@ if tokenizer.pad_token is None:
 def preprocess_function(examples):
     inputs = []
     labels = []
+    assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
+    missing_assistant_token = 0
     for query, passage in zip(examples['query'], examples['passage']):
-        # Corrected the prompt by removing the extra '}'
+        # Construct the prompt
         prompt = f"<|user|>{query}<|end_of_turn|><|assistant|>{passage}<|end_of_turn|>"
         # Tokenize the prompt
         tokenized = tokenizer(prompt, truncation=True, max_length=max_length, padding=False)
@@ -86,15 +97,15 @@ def preprocess_function(examples):
         # Initialize labels with -100 to ignore in loss computation
         labels_ids = [-100] * len(input_ids)
 
-        # Get the token ID for the assistant token
-        assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
+        # Find the position of the assistant token
         try:
-            # Find the position of the assistant token
             assistant_token_position = input_ids.index(assistant_token_id)
             # Set labels for the assistant's response
             labels_ids[assistant_token_position + 1:] = input_ids[assistant_token_position + 1:]
         except ValueError:
-            # If assistant token not found, ignore entire sequence
+            # Assistant token not found
+            missing_assistant_token += 1
+            # You can decide how to handle this case
             labels_ids = [-100] * len(input_ids)
 
         inputs.append({
@@ -102,6 +113,9 @@ def preprocess_function(examples):
             'attention_mask': attention_mask
         })
         labels.append(labels_ids)
+
+    # Optional: Log the number of examples where the assistant token was not found
+    print(f"Number of examples where assistant token was not found: {missing_assistant_token}")
 
     return {
         'input_ids': [x['input_ids'] for x in inputs],
@@ -123,6 +137,13 @@ tokenized_validation_dataset = validation_dataset.map(
     batched=True,
     remove_columns=validation_dataset.column_names,
 )
+
+# Filter out examples where the assistant token was not found
+def filter_empty_labels(example):
+    return any(label != -100 for label in example['labels'])
+
+tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
+tokenized_validation_dataset = tokenized_validation_dataset.filter(filter_empty_labels)
 
 # Define a custom collate function to handle dynamic padding
 def collate_fn(batch):
@@ -179,7 +200,7 @@ scheduler = get_linear_schedule_with_warmup(
 )
 
 # Initialize mixed precision scaler using the updated API
-scaler = torch.amp.GradScaler(device_type='cuda', enabled=fp16)
+scaler = torch.amp.GradScaler(enabled=fp16)
 
 # ------------------------------
 # 4. Evaluation Function
