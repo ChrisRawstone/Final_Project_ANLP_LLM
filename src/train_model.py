@@ -37,10 +37,11 @@ from utils import (
 )
 import wandb  # Import wandb
 
+wandb.login(key='aa3e3c46cc563c788908b8b2be3dcfb1ee6f109c')
+
+
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-wandb.login(key='aa3e3c46cc563c788908b8b2be3dcfb1ee6f109c')
 
 # ------------------------------
 # 2. Setup and Configuration
@@ -57,10 +58,10 @@ def main() -> None:
 
     # Configuration parameters
     model_name = "Qwen/Qwen2.5-0.5B"
-    train_path = "data/raw/eli5_qa_danish/train"          # Update this path if necessary
+    train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
     validation_path = "data/raw/eli5_qa_danish/validation" # Update this path if necessary
     batch_size = 2
-    num_epochs = 3  # Adjust as needed
+    num_epochs = 10  # Adjust as needed
     learning_rate = 1e-5
     weight_decay = 0.01
     max_length = 256  # Adjust based on your data
@@ -98,7 +99,7 @@ def main() -> None:
     special_tokens_dict = {
         'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']
     }
-    num_added_toks: int = tokenizer.add_special_tokens(special_tokens_dict)
+    num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
     print(f"Added {num_added_toks} special tokens to the tokenizer.")
 
     # Load the model
@@ -127,7 +128,7 @@ def main() -> None:
     print("\nvalidation_dataset:\n", validation_dataset)
 
     # Select a small subset for testing (e.g., first 1000 examples)
-    test_subset_size: int = 1000
+    test_subset_size = 10000
     small_train_dataset = train_dataset.select(range(test_subset_size))
     print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
 
@@ -151,7 +152,7 @@ def main() -> None:
     # ------------------------------
 
     # Create DataLoader for the small subset
-    train_loader: DataLoader = create_dataloader(
+    train_loader = create_dataloader(
         tokenized_train_dataset,
         tokenizer,
         batch_size=batch_size,
@@ -178,14 +179,14 @@ def main() -> None:
     )
 
     # Initialize GradScaler if using mixed precision
-    scaler = torch.amp.GradScaler(device_type="cuda", enabled=fp16) if fp16 else None
+    scaler = torch.amp.GradScaler(device="cuda",enabled=fp16) if fp16 else None
 
     # ------------------------------
     # 8. Prepare Evaluation Prompts
     # ------------------------------
 
     # Example Danish question prompts
-    evaluation_prompts: = [
+    evaluation_prompts = [
         "<|user|>Hvordan laver jeg en kop kaffe?<|end_of_turn|>",
         "<|user|>Hvad er meningen med livet?<|end_of_turn|>",
         "<|user|>Kan du forklare kvantemekanik?<|end_of_turn|>",

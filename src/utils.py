@@ -11,6 +11,7 @@ from datasets import Dataset
 from typing import Any, Dict, List, Optional
 from tqdm import tqdm
 import wandb  # Import wandb
+import math  # Import math for perplexity calculation
 
 def set_seed(seed: int) -> None:
     """
@@ -243,7 +244,6 @@ def calculate_perplexity(loss: float) -> float:
     Returns:
         float: The perplexity.
     """
-    import math
     return math.exp(loss)
 
 
@@ -346,7 +346,7 @@ def run_training_steps(
                     'perplexity': perplexity
                 })
 
-            # Log loss every 10 steps
+            # Log loss every 10 gradient accumulation steps
             if (step + 1) % (10 * gradient_accumulation_steps) == 0:
                 avg_loss = epoch_loss / ((step + 1) / gradient_accumulation_steps)
                 print(f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}")
@@ -368,10 +368,12 @@ def run_training_steps(
         print("\nEvaluating the model with Danish prompts...")
         responses = evaluate(model, tokenizer, device, evaluation_prompts)
 
-        # Log evaluation responses to wandb
-        for idx, (prompt, response) in enumerate(zip(evaluation_prompts, responses)):
+        # Log evaluation responses to wandb using a Table
+        table = wandb.Table(columns=["Prompt", "Response"])
+        for prompt, response in zip(evaluation_prompts, responses):
             print(f"\nPrompt: {prompt}\nResponse: {response}")
-            wandb.log({f'eval/response_{idx}': response})
+            table.add_data(prompt, response)
+        wandb.log({"evaluation_responses": table})
 
         # Log epoch metrics to wandb
         avg_epoch_loss = epoch_loss / (len(loader) / gradient_accumulation_steps)
