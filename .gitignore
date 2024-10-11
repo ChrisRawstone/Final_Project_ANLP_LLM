@@ -4,8 +4,9 @@
 /data
 
 *qwen2.5*
-
+models
 *danish-pytorch-test*
+wandb
 
 # default:
 

@@ -1,1 +1,8 @@
 torch >= 2.1.0
+wandb
+transformers
+datasets
+numpy
+pandas
+scikit-learn
+matplotlib
