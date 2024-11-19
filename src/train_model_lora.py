@@ -24,6 +24,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup,
+    BitsAndBytesConfig,  # Import for quantization
 )
 from torch.utils.data import DataLoader
 from typing import Optional, List
@@ -38,8 +39,8 @@ from utils import (
 )
 import wandb  # Import wandb
 
-# Import PEFT modules for LoRA
-from peft import LoraConfig, get_peft_model
+# Import PEFT modules for LoRA and LoftQ
+from peft import LoraConfig, get_peft_model, replace_lora_weights_loftq
 
 # Ensure you are logged into wandb
 wandb.login()
@@ -62,10 +63,10 @@ def main() -> None:
     print(f"Using device: {device}")
 
     # Configuration parameters
-    model_name = "Qwen/Qwen2.5-1.5B"
+    model_name = "Qwen/Qwen2.5-7B-Instruct"
     train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
     validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
-    batch_size = 4
+    batch_size = 2
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
     weight_decay = 0.01
@@ -100,7 +101,7 @@ def main() -> None:
     )
 
     # ------------------------------
-    # 3. Load Tokenizer and Model with LoRA
+    # 3. Load Tokenizer and Model with LoRA and Quantization
     # ------------------------------
 
     # Load the tokenizer
@@ -113,8 +114,20 @@ def main() -> None:
     num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
     print(f"Added {num_added_toks} special tokens to the tokenizer.")
 
-    # Load the model
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    # Define the quantization configuration
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type='nf4',  # Use 'nf4' quantization type
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,  # Could be torch.bfloat16 if supported
+    )
+
+    # Load the model with quantization
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map='auto',  # Automatically map model layers to devices
+    )
 
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))
@@ -124,7 +137,7 @@ def main() -> None:
     lora_config = LoraConfig(
         r=16,  # Low-rank update matrices rank
         lora_alpha=32,  # Scaling factor
-        target_modules=["W_pack", "o_proj"],  # Target modules in Qwen model
+        target_modules="all-linear",  # Apply LoRA to all linear layers
         lora_dropout=0.1,
         bias="none",
         task_type="CAUSAL_LM",
@@ -133,13 +146,11 @@ def main() -> None:
     # Wrap the model with LoRA
     model = get_peft_model(model, lora_config)
 
-
+    # Apply LoftQ initialization
+    replace_lora_weights_loftq(model)
 
     # Print trainable parameters for verification
     model.print_trainable_parameters()
-
-    # Move model to device
-    model.to(device)
 
     # Ensure the tokenizer uses the special tokens
     if tokenizer.pad_token is None:
@@ -244,7 +255,7 @@ def main() -> None:
     )
 
     print("\nTraining script completed.")
-    
+
     # Finish wandb run
     wandb.finish()
 
