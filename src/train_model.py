@@ -43,6 +43,7 @@ wandb.login()  # Removed the API key for security reasons
 
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["WANDB_MODE"] = "disabled"
 
 # ------------------------------
 # 2. Setup and Configuration
@@ -59,9 +60,9 @@ def main() -> None:
 
     # Configuration parameters
     model_name = "Qwen/Qwen2.5-1.5B"
-    train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
-    validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
-    batch_size = 16
+    train_path = "data/raw/eli5_qa_danish/train"        
+    validation_path = "data/raw/eli5_qa_danish/validation"   
+    batch_size = 4
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
     weight_decay = 0.01
@@ -112,6 +113,9 @@ def main() -> None:
 
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(model_name)
+
+    # print trainable paramters
+    print(f"Trainable parameters: {model.num_parameters()}")
 
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))

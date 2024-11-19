@@ -46,6 +46,7 @@ wandb.login()
 
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["WANDB_MODE"] = "disabled"
 
 # ------------------------------
 # 2. Setup and Configuration
@@ -64,7 +65,7 @@ def main() -> None:
     model_name = "Qwen/Qwen2.5-1.5B"
     train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
     validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
-    batch_size = 16
+    batch_size = 4
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
     weight_decay = 0.01
@@ -131,6 +132,8 @@ def main() -> None:
 
     # Wrap the model with LoRA
     model = get_peft_model(model, lora_config)
+
+
 
     # Print trainable parameters for verification
     model.print_trainable_parameters()
