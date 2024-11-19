@@ -38,8 +38,11 @@ from utils import (
 )
 import wandb  # Import wandb
 
-# Replace with your actual wandb API key or ensure you are logged in via the command line
-wandb.login()  # Removed the API key for security reasons
+# Import PEFT modules for LoRA
+from peft import LoraConfig, get_peft_model
+
+# Ensure you are logged into wandb
+wandb.login()
 
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -93,11 +96,10 @@ def main() -> None:
             "output_dir": output_dir,
         },
         reinit=True
-
     )
 
     # ------------------------------
-    # 3. Load Tokenizer and Model
+    # 3. Load Tokenizer and Model with LoRA
     # ------------------------------
 
     # Load the tokenizer
@@ -117,6 +119,23 @@ def main() -> None:
     model.resize_token_embeddings(len(tokenizer))
     print(f"Resized model embeddings to {len(tokenizer)} tokens.")
 
+    # Create LoRA configuration
+    lora_config = LoraConfig(
+        r=16,  # Low-rank update matrices rank
+        lora_alpha=32,  # Scaling factor
+        target_modules=["W_pack", "o_proj"],  # Target modules in Qwen model
+        lora_dropout=0.1,
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+
+    # Wrap the model with LoRA
+    model = get_peft_model(model, lora_config)
+
+    # Print trainable parameters for verification
+    model.print_trainable_parameters()
+
+    # Move model to device
     model.to(device)
 
     # Ensure the tokenizer uses the special tokens
@@ -135,16 +154,14 @@ def main() -> None:
     print("\ntrain_dataset: \n", train_dataset)
     print("\nvalidation_dataset:\n", validation_dataset)
 
-    # Select a small subset for testing (e.g., first 10000 examples)
-    # test_subset_size = 1000
-    small_train_dataset = train_dataset # .select(range(test_subset_size))
-    # print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
+    # Use the full training dataset
+    small_train_dataset = train_dataset
 
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
 
-    print("\nPreprocessing the small training dataset...")
+    print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),
         batched=True,
@@ -159,7 +176,7 @@ def main() -> None:
     # 6. Create DataLoader
     # ------------------------------
 
-    # Create DataLoader for the small subset
+    # Create DataLoader for the training dataset
     train_loader = create_dataloader(
         tokenized_train_dataset,
         tokenizer,
@@ -187,7 +204,7 @@ def main() -> None:
     )
 
     # Initialize GradScaler if using mixed precision
-    scaler = torch.amp.GradScaler(device="cuda",enabled=fp16) if fp16 else None
+    scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
 
     # ------------------------------
     # 8. Prepare Evaluation Prompts
@@ -224,7 +241,7 @@ def main() -> None:
     )
 
     print("\nTraining script completed.")
-
+    
     # Finish wandb run
     wandb.finish()
 
