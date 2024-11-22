@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """
 train_model.py
 
@@ -59,10 +56,10 @@ def main() -> None:
     print(f"Using device: {device}")
 
     # Configuration parameters
-    model_name = "Qwen/Qwen2.5-1.5B"
-    train_path = "data/raw/eli5_qa_danish/train"        
-    validation_path = "data/raw/eli5_qa_danish/validation"   
-    batch_size = 4
+    model_name = "Qwen/Qwen2.5-0.5B"
+    train_path = "data/processed/instruct_train_dataset"
+    validation_path = "data/processed/instruct_val_dataset"  # Corrected path
+    batch_size = 2
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
     weight_decay = 0.01
@@ -114,7 +111,7 @@ def main() -> None:
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    # print trainable paramters
+    # Print trainable parameters
     print(f"Trainable parameters: {model.num_parameters()}")
 
     # Resize model embeddings to accommodate new tokens
@@ -125,7 +122,7 @@ def main() -> None:
 
     # Ensure the tokenizer uses the special tokens
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token = tokenizer.eos_token_id
 
     # ------------------------------
     # 4. Load and Inspect Data
@@ -139,16 +136,14 @@ def main() -> None:
     print("\ntrain_dataset: \n", train_dataset)
     print("\nvalidation_dataset:\n", validation_dataset)
 
-    # Select a small subset for testing (e.g., first 10000 examples)
-    # test_subset_size = 1000
-    small_train_dataset = train_dataset # .select(range(test_subset_size))
-    # print(f"\nSelected first {test_subset_size} examples from the training dataset for testing.")
+    # No need to select a subset; use the entire dataset
+    small_train_dataset = train_dataset
 
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
 
-    print("\nPreprocessing the small training dataset...")
+    print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),
         batched=True,
@@ -159,11 +154,22 @@ def main() -> None:
     tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
     print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
+    # Preprocess the validation dataset
+    print("\nPreprocessing the validation dataset...")
+    tokenized_val_dataset = validation_dataset.map(
+        lambda examples: preprocess_function(examples, tokenizer, max_length),
+        batched=True,
+        remove_columns=validation_dataset.column_names
+    )
+
+    tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
+    print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
+
     # ------------------------------
-    # 6. Create DataLoader
+    # 6. Create DataLoaders
     # ------------------------------
 
-    # Create DataLoader for the small subset
+    # Create DataLoaders for training and validation datasets
     train_loader = create_dataloader(
         tokenized_train_dataset,
         tokenizer,
@@ -171,7 +177,14 @@ def main() -> None:
         num_workers=num_workers
     )
 
-    print(f"\nCreated DataLoader with batch size {batch_size} and {num_workers} workers.")
+    val_loader = create_dataloader(
+        tokenized_val_dataset,
+        tokenizer,
+        batch_size=batch_size,
+        num_workers=num_workers
+    )
+
+    print(f"\nCreated DataLoaders with batch size {batch_size} and {num_workers} workers.")
 
     # ------------------------------
     # 7. Initialize Optimizer and Scheduler
@@ -191,7 +204,7 @@ def main() -> None:
     )
 
     # Initialize GradScaler if using mixed precision
-    scaler = torch.amp.GradScaler(device="cuda",enabled=fp16) if fp16 else None
+    scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
 
     # ------------------------------
     # 8. Prepare Evaluation Prompts
@@ -212,19 +225,20 @@ def main() -> None:
     # Run the training with the enhanced training loop
     run_training_steps(
         model=model,
-        loader=train_loader,
+        train_loader=train_loader,
+        val_loader=val_loader,  # Pass the validation DataLoader
         optimizer=optimizer,
         scheduler=scheduler,
         scaler=scaler,
         device=device,
         evaluation_prompts=evaluation_prompts,
         tokenizer=tokenizer,
-        num_epochs=num_epochs,  # Number of epochs
+        num_epochs=num_epochs,
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        num_steps_per_epoch=None,  # Set to limit steps per epoch if needed
-        output_dir=output_dir        # Pass the output directory for saving models
+        num_steps_per_epoch=None,
+        output_dir=output_dir
     )
 
     print("\nTraining script completed.")

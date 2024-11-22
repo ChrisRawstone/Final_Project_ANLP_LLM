@@ -1,8 +1,7 @@
 """
 utils.py
 
-
-
+Utility functions for training the language model.
 """
 
 import os
@@ -15,8 +14,8 @@ from transformers import (
 from datasets import Dataset
 from typing import Any, Dict, List, Optional
 from tqdm import tqdm
-import wandb  # Import wandb
-import math  # Import math for perplexity calculation
+import wandb
+import math  # For perplexity calculation
 
 def set_seed(seed: int) -> None:
     """
@@ -77,9 +76,13 @@ def preprocess_function(
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
 
-    for query, passage in zip(examples['query'], examples['passage']):
+    for instruction, input_text, output_text in zip(
+        examples.get('instructions', [''] * len(examples['inputs'])),
+        examples['inputs'],
+        examples['outputs']
+    ):
         # Construct the prompt
-        prompt = f"<|user|>{query}<|end_of_turn|><|assistant|>{passage}<|end_of_turn|>"
+        prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"
 
         # Tokenize the prompt
         tokenized = tokenizer(
@@ -256,7 +259,8 @@ def calculate_perplexity(loss: float) -> float:
 
 def run_training_steps(
     model: PreTrainedModel,
-    loader: DataLoader,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LambdaLR,
     scaler: Optional[torch.cuda.amp.GradScaler],
@@ -268,7 +272,7 @@ def run_training_steps(
     fp16: bool = True,
     max_grad_norm: float = 1.0,
     num_steps_per_epoch: Optional[int] = None,
-    output_dir: str = "models/checkpoint"  # Added output_dir parameter
+    output_dir: str = "models/checkpoint"
 ) -> None:
     """
     Runs the training loop with evaluation and wandb logging.
@@ -276,7 +280,8 @@ def run_training_steps(
 
     Args:
         model (PreTrainedModel): The language model.
-        loader (DataLoader): DataLoader for training data.
+        train_loader (DataLoader): DataLoader for training data.
+        val_loader (DataLoader): DataLoader for validation data.
         optimizer (torch.optim.Optimizer): Optimizer.
         scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
         scaler (Optional[torch.cuda.amp.GradScaler]): GradScaler for mixed precision.
@@ -298,7 +303,7 @@ def run_training_steps(
         epoch_loss = 0.0
         optimizer.zero_grad()
 
-        for step, batch in enumerate(tqdm(loader, desc=f"Epoch {epoch + 1}")):
+        for step, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
             if num_steps_per_epoch and step >= num_steps_per_epoch:
                 break
 
@@ -306,7 +311,7 @@ def run_training_steps(
             batch = {k: v.to(device) for k, v in batch.items()}
 
             # Forward pass with autocast
-            with torch.amp.autocast(device_type="cuda",enabled=fp16):
+            with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
@@ -374,7 +379,27 @@ def run_training_steps(
             scheduler.step()
             optimizer.zero_grad()
 
-        # After each epoch, evaluate the model
+        # After each epoch, evaluate the model on the validation set
+        print("\nEvaluating the model on the validation dataset...")
+        val_loss = 0.0
+        model.eval()
+        with torch.no_grad():
+            for batch in tqdm(val_loader, desc="Validation"):
+                batch = {k: v.to(device) for k, v in batch.items()}
+                with torch.cuda.amp.autocast(enabled=fp16):
+                    outputs = model(
+                        input_ids=batch['input_ids'],
+                        attention_mask=batch['attention_mask'],
+                        labels=batch['labels']
+                    )
+                    loss = outputs.loss
+                val_loss += loss.item()
+        val_loss /= len(val_loader)
+        val_perplexity = calculate_perplexity(val_loss)
+        print(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
+        model.train()
+
+        # Evaluate the model with prompts
         print("\nEvaluating the model with Danish prompts...")
         responses = evaluate(model, tokenizer, device, evaluation_prompts)
 
@@ -384,14 +409,15 @@ def run_training_steps(
             print(f"\nPrompt: {prompt}\nResponse: {response}")
             table.add_data(prompt, response)
 
-
         # Log epoch metrics to wandb
-        avg_epoch_loss = epoch_loss / (len(loader) / gradient_accumulation_steps)
+        avg_epoch_loss = epoch_loss / (len(train_loader) / gradient_accumulation_steps)
         epoch_perplexity = calculate_perplexity(avg_epoch_loss)
         wandb.log({
             'epoch': epoch + 1,
             'avg_epoch_loss': avg_epoch_loss,
             'epoch_perplexity': epoch_perplexity,
+            'validation_loss': val_loss,
+            'validation_perplexity': val_perplexity,
             "evaluation_responses": table
         })
 

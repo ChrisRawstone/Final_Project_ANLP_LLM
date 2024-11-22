@@ -1,23 +1,53 @@
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
+
+def standardize_features(dataset, feature_map):
+    """
+    Standardize dataset features to match a unified format.
+    Args:
+        dataset: The dataset to be standardized.
+        feature_map: A dictionary mapping original features to standardized features.
+    Returns:
+        The dataset with standardized features.
+    """
+    return dataset.map(
+        lambda example: {new_feat: example[old_feat] for old_feat, new_feat in feature_map.items()},
+        remove_columns=list(feature_map.keys())
+    )
 
 if __name__ == '__main__':
-    # Get the data and process it
+    # Load the datasets
+    dataset1 = load_dataset("kobprof/skolegpt-instruct")
+    dataset2 = load_dataset("Mabeck/danish-OpenHermes")
 
-    # Specify the dataset and the desired local directory
-    dataset = load_dataset("KennethTM/eli5_question_answer_danish")
+    # Standardize features
+    dataset1_feature_map = {
+        "system_prompt": "instructions",
+        "question": "inputs",
+        "response": "outputs"
+    }
+    standardized_dataset1 = standardize_features(dataset1['train'], dataset1_feature_map)
 
-    # Step 2: Split the dataset into training and validation sets
-    # You can adjust the 'test_size' parameter to control the size of the validation set
-    split_dataset = dataset['train'].train_test_split(test_size=0.2, seed=42)
+    # No changes needed for dataset2
+    standardized_dataset2 = dataset2['train']
 
-    # Step 3: Separate the splits
-    train_dataset = split_dataset['train']
-    validation_dataset = split_dataset['test']
+    # Concatenate the datasets
+    combined_train = concatenate_datasets([standardized_dataset1, standardized_dataset2])
 
-    # Optional: Save the splits to disk if needed
-    train_dataset.save_to_disk("data/raw/eli5_qa_danish/train")
-    validation_dataset.save_to_disk("data/raw/eli5_qa_danish/validation")
+    # Print the number of rows for each dataset
+    print(f"Rows in dataset1 (train): {len(dataset1['train'])}")
+    print(f"Rows in dataset2 (train): {len(dataset2['train'])}")
 
-    print("Training and validation datasets have been created and saved.")
 
-    pass
+    # Print the number of rows in the combined dataset
+    print(f"Rows in combined dataset: {len(combined_train)}")
+
+    # Split into train and validation
+    train_size = int(0.8 * len(combined_train))
+    train_dataset = combined_train.select(range(train_size))
+    val_dataset = combined_train.select(range(train_size, len(combined_train)))
+
+    # Save the train and validation datasets
+    train_dataset.save_to_disk("data/processed/instruct_train_dataset")
+    val_dataset.save_to_disk("data/processed/instruct_val_dataset")
+
+    print("Datasets saved successfully!")
