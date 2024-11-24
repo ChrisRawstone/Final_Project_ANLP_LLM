@@ -17,4 +17,4 @@ module load cuda/11.8
 
 source venv_poetry/bin/activate
 
-python src/train_model.py
+python src/train_model_lora.py

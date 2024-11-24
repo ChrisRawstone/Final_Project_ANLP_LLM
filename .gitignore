@@ -9,6 +9,9 @@ models
 *danish-pytorch-test*
 wandb
 
+.scandeval_cache
+ScandEval
+venv_poetry
 # default:
 
 docs/site/

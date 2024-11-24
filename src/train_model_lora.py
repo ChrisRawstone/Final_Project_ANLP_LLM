@@ -39,6 +39,17 @@ from utils import (
 )
 import wandb  # Import wandb
 
+import logging
+
+# Configure the logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
+
+
+
 # Import PEFT modules for LoRA and LoftQ
 from peft import LoraConfig, get_peft_model, replace_lora_weights_loftq
 
@@ -63,9 +74,9 @@ def main() -> None:
     print(f"Using device: {device}")
 
     # Configuration parameters
-    model_name = "Qwen/Qwen2.5-7B-Instruct"
-    train_path = "data/raw/eli5_qa_danish/train"             # Update this path if necessary
-    validation_path = "data/raw/eli5_qa_danish/validation"   # Update this path if necessary
+    model_name = "Qwen/Qwen2.5-0.5B"
+    train_path = "data/processed/instruct_train_dataset"
+    validation_path = "data/processed/instruct_val_dataset"  # Corrected path
     batch_size = 2
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
@@ -75,7 +86,7 @@ def main() -> None:
     fp16 = True  # Enable mixed precision
     max_grad_norm = 1.0  # Gradient clipping
     num_workers = 4  # DataLoader workers
-    output_dir = "models/long_train_hpc"  # Directory to save models
+    output_dir = "models/lora_first_iteration"  # Directory to save models
 
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -150,7 +161,13 @@ def main() -> None:
     replace_lora_weights_loftq(model)
 
     # Print trainable parameters for verification
-    model.print_trainable_parameters()
+    trainable_params, all_param = model.get_nb_trainable_parameters()
+
+    logger.info(
+        f"Trainable params: {trainable_params:,d} || "
+        f"All params: {all_param:,d} || "
+        f"Trainable%: {100 * trainable_params / all_param:.4f}"
+    )
 
     # Ensure the tokenizer uses the special tokens
     if tokenizer.pad_token is None:
@@ -168,7 +185,7 @@ def main() -> None:
     print("\ntrain_dataset: \n", train_dataset)
     print("\nvalidation_dataset:\n", validation_dataset)
 
-    # Use the full training dataset
+    # No need to select a subset; use the entire dataset
     small_train_dataset = train_dataset
 
     # ------------------------------
@@ -186,11 +203,22 @@ def main() -> None:
     tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
     print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
+    # Preprocess the validation dataset
+    print("\nPreprocessing the validation dataset...")
+    tokenized_val_dataset = validation_dataset.map(
+        lambda examples: preprocess_function(examples, tokenizer, max_length),
+        batched=True,
+        remove_columns=validation_dataset.column_names
+    )
+
+    tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
+    print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
+
     # ------------------------------
-    # 6. Create DataLoader
+    # 6. Create DataLoaders
     # ------------------------------
 
-    # Create DataLoader for the training dataset
+    # Create DataLoaders for training and validation datasets
     train_loader = create_dataloader(
         tokenized_train_dataset,
         tokenizer,
@@ -198,7 +226,14 @@ def main() -> None:
         num_workers=num_workers
     )
 
-    print(f"\nCreated DataLoader with batch size {batch_size} and {num_workers} workers.")
+    val_loader = create_dataloader(
+        tokenized_val_dataset,
+        tokenizer,
+        batch_size=batch_size,
+        num_workers=num_workers
+    )
+
+    print(f"\nCreated DataLoaders with batch size {batch_size} and {num_workers} workers.")
 
     # ------------------------------
     # 7. Initialize Optimizer and Scheduler
@@ -239,19 +274,20 @@ def main() -> None:
     # Run the training with the enhanced training loop
     run_training_steps(
         model=model,
-        loader=train_loader,
+        train_loader=train_loader,
+        val_loader=val_loader,  # Pass the validation DataLoader
         optimizer=optimizer,
         scheduler=scheduler,
         scaler=scaler,
         device=device,
         evaluation_prompts=evaluation_prompts,
         tokenizer=tokenizer,
-        num_epochs=num_epochs,  # Number of epochs
+        num_epochs=num_epochs,
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        num_steps_per_epoch=None,  # Set to limit steps per epoch if needed
-        output_dir=output_dir        # Pass the output directory for saving models
+        num_steps_per_epoch=None,
+        output_dir=output_dir
     )
 
     print("\nTraining script completed.")

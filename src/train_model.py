@@ -210,6 +210,11 @@ def main() -> None:
     # 8. Prepare Evaluation Prompts
     # ------------------------------
 
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable parameter: {name}")
+
+
     # Example Danish question prompts
     evaluation_prompts = [
         "<|user|>Hvordan laver jeg en kop kaffe?<|end_of_turn|>",

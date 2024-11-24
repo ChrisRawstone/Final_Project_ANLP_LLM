@@ -42,7 +42,7 @@ if __name__ == '__main__':
     print(f"Rows in combined dataset: {len(combined_train)}")
 
     # Split into train and validation
-    train_size = int(0.8 * len(combined_train))
+    train_size = int(0.95 * len(combined_train))
     train_dataset = combined_train.select(range(train_size))
     val_dataset = combined_train.select(range(train_size, len(combined_train)))
 

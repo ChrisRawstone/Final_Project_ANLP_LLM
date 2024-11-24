@@ -256,6 +256,61 @@ def calculate_perplexity(loss: float) -> float:
     """
     return math.exp(loss)
 
+def save_model_checkpoint(step: int, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, output_dir: str):
+    save_path = os.path.join(output_dir, f"step_{step}")
+    os.makedirs(save_path, exist_ok=True)
+    print(f"\nSaving model at step {step} to {save_path}...")
+    model.save_pretrained(save_path)
+    tokenizer.save_pretrained(save_path)
+    print(f"Model and tokenizer saved at step {step}.")
+
+def evaluate_model(model: PreTrainedModel, val_loader: DataLoader, device: torch.device, fp16: bool) -> Tuple[float, float]:
+    print("\nEvaluating the model on the validation dataset...")
+    val_loss = 0.0
+    model.eval()
+    with torch.no_grad():
+        for batch in tqdm(val_loader, desc="Validation"):
+            batch = {k: v.to(device) for k, v in batch.items()}
+            with torch.cuda.amp.autocast(enabled=fp16):
+                outputs = model(
+                    input_ids=batch['input_ids'],
+                    attention_mask=batch['attention_mask'],
+                    labels=batch['labels']
+                )
+                val_loss += outputs.loss.item()
+    val_loss /= len(val_loader)
+    val_perplexity = calculate_perplexity(val_loss)
+    print(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
+    model.train()
+    return val_loss, val_perplexity
+
+def log_evaluation(
+    epoch: int,
+    epoch_loss: float,
+    global_step: int,
+    val_loss: float,
+    val_perplexity: float,
+    evaluation_prompts: List[str],
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    device: torch.device
+):
+    print("\nEvaluating the model with Danish prompts...")
+    responses = evaluate(model, tokenizer, device, evaluation_prompts)
+    table = wandb.Table(columns=["Prompt", "Response"])
+    for prompt, response in zip(evaluation_prompts, responses):
+        print(f"\nPrompt: {prompt}\nResponse: {response}")
+        table.add_data(prompt, response)
+    avg_epoch_loss = epoch_loss / max(1, global_step)
+    epoch_perplexity = calculate_perplexity(avg_epoch_loss)
+    wandb.log({
+        'epoch': epoch + 1,
+        'avg_epoch_loss': avg_epoch_loss,
+        'epoch_perplexity': epoch_perplexity,
+        'validation_loss': val_loss,
+        'validation_perplexity': val_perplexity,
+        "evaluation_responses": table
+    })
 
 def run_training_steps(
     model: PreTrainedModel,
@@ -272,31 +327,17 @@ def run_training_steps(
     fp16: bool = True,
     max_grad_norm: float = 1.0,
     num_steps_per_epoch: Optional[int] = None,
-    output_dir: str = "models/checkpoint"
+    output_dir: str = "models/checkpoint",
+    save_steps: int = 1300
 ) -> None:
     """
     Runs the training loop with evaluation and wandb logging.
-    Saves the model after each epoch.
-
-    Args:
-        model (PreTrainedModel): The language model.
-        train_loader (DataLoader): DataLoader for training data.
-        val_loader (DataLoader): DataLoader for validation data.
-        optimizer (torch.optim.Optimizer): Optimizer.
-        scheduler (torch.optim.lr_scheduler.LambdaLR): Learning rate scheduler.
-        scaler (Optional[torch.cuda.amp.GradScaler]): GradScaler for mixed precision.
-        device (torch.device): Device to run on.
-        evaluation_prompts (List[str]): Prompts for evaluation after each epoch.
-        tokenizer (PreTrainedTokenizer): The tokenizer.
-        num_epochs (int, optional): Number of training epochs. Defaults to 3.
-        gradient_accumulation_steps (int, optional): Steps to accumulate gradients. Defaults to 4.
-        fp16 (bool, optional): Whether to use mixed precision. Defaults to True.
-        max_grad_norm (float, optional): Maximum gradient norm for clipping. Defaults to 1.0.
-        num_steps_per_epoch (Optional[int], optional): Limit steps per epoch. Defaults to None.
-        output_dir (str, optional): Directory to save the model checkpoints. Defaults to "models/checkpoint".
+    Saves the model every `save_steps` steps.
     """
     model.train()
     print("\nStarting training...")
+
+    global_step = 0
 
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
@@ -307,40 +348,31 @@ def run_training_steps(
             if num_steps_per_epoch and step >= num_steps_per_epoch:
                 break
 
-            # Move batch to device
             batch = {k: v.to(device) for k, v in batch.items()}
 
-            # Forward pass with autocast
             with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
                     input_ids=batch['input_ids'],
                     attention_mask=batch['attention_mask'],
                     labels=batch['labels']
                 )
-                loss = outputs.loss
-                loss = loss / gradient_accumulation_steps  # Normalize loss
+                loss = outputs.loss / gradient_accumulation_steps
 
-            # Check if loss is nan
             if torch.isnan(loss):
                 print(f"Epoch {epoch + 1}, Step {step + 1}: Loss is nan. Exiting training.")
                 return
 
-            # Backward pass
             if fp16 and scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
 
-            # Accumulate loss
-            epoch_loss += loss.item() * gradient_accumulation_steps  # Multiply back to original loss
+            epoch_loss += loss.item() * gradient_accumulation_steps
 
-            # Optimizer step with gradient accumulation
             if (step + 1) % gradient_accumulation_steps == 0:
                 if fp16 and scaler is not None:
-                    # Unscale gradients and clip
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    # Optimizer step
                     scaler.step(optimizer)
                     scaler.update()
                 else:
@@ -349,24 +381,27 @@ def run_training_steps(
                 scheduler.step()
                 optimizer.zero_grad()
 
-                # Log metrics to wandb
+                global_step += 1
                 current_lr = scheduler.get_last_lr()[0]
-                avg_loss = epoch_loss / ((step + 1) / gradient_accumulation_steps)
+                avg_loss = epoch_loss / global_step
                 perplexity = calculate_perplexity(avg_loss)
                 wandb.log({
                     'epoch': epoch + 1,
-                    'step': step + 1,
+                    'global_step': global_step,
                     'learning_rate': current_lr,
                     'loss': avg_loss,
                     'perplexity': perplexity
                 })
 
-            # Log loss every 10 gradient accumulation steps
+                if global_step % save_steps == 0:
+                    save_model_checkpoint(global_step, model, tokenizer, output_dir)
+                    val_loss, val_perplexity = evaluate_model(model, val_loader, device, fp16)
+                    log_evaluation(epoch, epoch_loss, global_step, val_loss, val_perplexity, evaluation_prompts, model, tokenizer, device)
+
             if (step + 1) % (10 * gradient_accumulation_steps) == 0:
-                avg_loss = epoch_loss / ((step + 1) / gradient_accumulation_steps)
+                avg_loss = epoch_loss / max(1, global_step)
                 print(f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}")
 
-        # Handle remaining gradients if steps are not divisible by gradient_accumulation_steps
         if (step + 1) % gradient_accumulation_steps != 0:
             if fp16 and scaler is not None:
                 scaler.unscale_(optimizer)
@@ -379,54 +414,9 @@ def run_training_steps(
             scheduler.step()
             optimizer.zero_grad()
 
-        # After each epoch, evaluate the model on the validation set
-        print("\nEvaluating the model on the validation dataset...")
-        val_loss = 0.0
-        model.eval()
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Validation"):
-                batch = {k: v.to(device) for k, v in batch.items()}
-                with torch.cuda.amp.autocast(enabled=fp16):
-                    outputs = model(
-                        input_ids=batch['input_ids'],
-                        attention_mask=batch['attention_mask'],
-                        labels=batch['labels']
-                    )
-                    loss = outputs.loss
-                val_loss += loss.item()
-        val_loss /= len(val_loader)
-        val_perplexity = calculate_perplexity(val_loss)
-        print(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
-        model.train()
-
-        # Evaluate the model with prompts
-        print("\nEvaluating the model with Danish prompts...")
-        responses = evaluate(model, tokenizer, device, evaluation_prompts)
-
-        # Log evaluation responses to wandb using a Table
-        table = wandb.Table(columns=["Prompt", "Response"])
-        for prompt, response in zip(evaluation_prompts, responses):
-            print(f"\nPrompt: {prompt}\nResponse: {response}")
-            table.add_data(prompt, response)
-
-        # Log epoch metrics to wandb
-        avg_epoch_loss = epoch_loss / (len(train_loader) / gradient_accumulation_steps)
-        epoch_perplexity = calculate_perplexity(avg_epoch_loss)
-        wandb.log({
-            'epoch': epoch + 1,
-            'avg_epoch_loss': avg_epoch_loss,
-            'epoch_perplexity': epoch_perplexity,
-            'validation_loss': val_loss,
-            'validation_perplexity': val_perplexity,
-            "evaluation_responses": table
-        })
-
-        # Save the model and tokenizer after each epoch
-        epoch_output_dir = os.path.join(output_dir, f"epoch_{epoch + 1}")
-        os.makedirs(epoch_output_dir, exist_ok=True)
-        print(f"\nSaving model to {epoch_output_dir}...")
-        model.save_pretrained(epoch_output_dir)
-        tokenizer.save_pretrained(epoch_output_dir)
-        print(f"Model and tokenizer saved to {epoch_output_dir}.")
-
+    final_model_path = os.path.join(output_dir, "final_model")
+    os.makedirs(final_model_path, exist_ok=True)
+    print(f"\nSaving model to {final_model_path}...")
+    model.save_pretrained(final_model_path)
+    tokenizer.save_pretrained(final_model_path)
     print("\nTraining completed successfully.")
