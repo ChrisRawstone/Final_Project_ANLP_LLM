@@ -18,6 +18,7 @@ import wandb
 import math  # For perplexity calculation
 import logging
 import time
+import numpy as np
 
 # Configure the logger
 logger = logging.getLogger(__name__)
@@ -80,14 +81,26 @@ def preprocess_function(
     labels = []
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
+
+    user_prompt_lengths = []
+    assistant_prompt_lengths = []
     
     for instruction, input_text, output_text in zip(
         examples.get("instructions", [""] * len(examples["inputs"])),
         examples["inputs"],
         examples["outputs"],
-    ):
+    ):  
+        #contruct the prompt
+        user_prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|>"
+        #user_prompt_lengths.append(len(tokenizer(user_prompt)["input_ids"]))
+
+        assistant_prompt = f"<|assistant|>{output_text}<|end_of_turn|>"
+        #assistant_prompt_lengths.append(len(tokenizer(assistant_prompt)["input_ids"]))
+
+        prompt = f"{user_prompt}{assistant_prompt}"
+
         # Construct the prompt
-        prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"        
+        #prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"        
         # Tokenize the prompt
         tokenized = tokenizer(
             prompt,
@@ -125,6 +138,13 @@ def preprocess_function(
         logger.warning(
             f"Number of examples where assistant token was not found: {missing_assistant_token}"
         )
+
+    # get the average length of the prompts
+    # avg_user_prompt_length = np.mean(user_prompt_lengths)
+    # avg_assistant_prompt_length = np.mean(assistant_prompt_lengths)
+
+    # print(f"Average user prompt length: {avg_user_prompt_length}")
+    # print(f"Average assistant prompt length: {avg_assistant_prompt_length}")
 
     return {
         "input_ids": [x["input_ids"] for x in inputs],
@@ -372,7 +392,7 @@ def run_training_steps(
     logger.info("Starting training...")
 
     global_step = 0
-
+    total_batches = 0
     for epoch in range(num_epochs):
         logger.info(f"Epoch {epoch + 1}/{num_epochs}")
         epoch_loss = 0.0
@@ -380,11 +400,10 @@ def run_training_steps(
 
         start_time = time.time()
 
-        for step, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
-            if num_steps_per_epoch and step >= num_steps_per_epoch:
-                break
-
-            batch = {k: v.to(device) for k, v in batch.items()}
+        for step, _batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
+                       
+          
+            batch = {k: v.to(device) for k, v in _batch.items()}
 
             with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
@@ -404,7 +423,7 @@ def run_training_steps(
                 loss.backward()
 
             epoch_loss += loss.item() * gradient_accumulation_steps
-
+            total_batches += 1
             if (step + 1) % gradient_accumulation_steps == 0:
                 if fp16 and scaler is not None:
                     scaler.unscale_(optimizer)
@@ -419,7 +438,8 @@ def run_training_steps(
 
                 global_step += 1
                 current_lr = scheduler.get_last_lr()[0]
-                avg_loss = epoch_loss / global_step
+                #avg_loss = epoch_loss / global_step
+                avg_loss = epoch_loss / total_batches
                 perplexity = calculate_perplexity(avg_loss)
                 wandb.log(
                     {

@@ -17,4 +17,10 @@ module load cuda/11.8
 
 source venv_poetry/bin/activate
 
-python src/train_model.py
+python src/train_model.py --max_length 512
+
+# parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
+# parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")  
+# parser.add_argument("--max_length", type=int, default=256, help="Maximum sequence length")
+# parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Steps for gradient accumulation")
+    

@@ -11,12 +11,15 @@ Usage:
 Ensure that the required datasets are available at the specified paths.
 """
 
+
+
 # ------------------------------
 # 1. Imports and Configuration
 # ------------------------------
-
+import argparse
 import os
 import torch
+from datetime import datetime
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -33,49 +36,69 @@ from utils import (
     evaluate,
     run_training_steps,
 )
+from parser import get_args
 import wandb  # Import wandb
 
 # Replace with your actual wandb API key or ensure you are logged in via the command line
-wandb.login()  # Removed the API key for security reasons
+wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
 
-# Suppress tokenizer parallelism warning
+# Suppresss tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["WANDB_MODE"] = "disabled"
+#os.environ["WANDB_MODE"] = "Disabled"
 
 # ------------------------------
 # 2. Setup and Configuration
 # ------------------------------
 
-def main() -> None:
-    # Set random seeds for reproducibility
-    seed = 42
+def main(args) -> None:
+
+    # Configuration parameters
+    model_name = "Qwen/Qwen2.5-0.5B"
+    train_path = "data/processed/instruct_train_dataset"
+    validation_path = "data/processed/instruct_val_dataset"
+    batch_size = args.batch_size
+    num_epochs = args.num_epochs
+    learning_rate = args.learning_rate
+    weight_decay = args.weight_decay
+    max_length = args.max_length
+    gradient_accumulation_steps = args.gradient_accumulation_steps
+    fp16 = args.fp16
+    max_grad_norm = args.max_grad_norm
+    num_workers = args.num_workers
+    seed = args.seed
+
+    # Set random seeds for reproducibility    
     set_seed(seed)
 
     # Check for GPU availability
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     print(f"Using device: {device}")
 
-    # Configuration parameters
-    model_name = "Qwen/Qwen2.5-0.5B"
-    train_path = "data/processed/instruct_train_dataset"
-    validation_path = "data/processed/instruct_val_dataset"  # Corrected path
-    batch_size = 2
-    num_epochs = 1  # Adjust as needed
-    learning_rate = 5e-5
-    weight_decay = 0.01
-    max_length = 256  # Adjust based on your data
-    gradient_accumulation_steps = 4
-    fp16 = True  # Enable mixed precision
-    max_grad_norm = 1.0  # Gradient clipping
-    num_workers = 4  # DataLoader workers
-    output_dir = "models/long_train_hpc"  # Directory to save models
 
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+       
+    output_dir = f"models/instruction/{timestamp}"
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+    # save the configuration
+
+    with open(f"{output_dir}/config.txt", "w") as f:
+        f.write(f"model_name: {model_name}\n")
+        f.write(f"batch_size: {batch_size}\n")
+        f.write(f"num_epochs: {num_epochs}\n")
+        f.write(f"learning_rate: {learning_rate}\n")
+        f.write(f"weight_decay: {weight_decay}\n")
+        f.write(f"max_length: {max_length}\n")
+        f.write(f"gradient_accumulation_steps: {gradient_accumulation_steps}\n")
+        f.write(f"fp16: {fp16}\n")
+        f.write(f"max_grad_norm: {max_grad_norm}\n")
+        f.write(f"num_workers: {num_workers}\n")
+        f.write(f"seed: {seed}\n")
 
     # Initialize wandb
     wandb.init(
         project="danish-qa-model",
+        name=f"instruction-{timestamp}",
         config={
             "model_name": model_name,
             "batch_size": batch_size,
@@ -142,14 +165,7 @@ def main() -> None:
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
-
-    # extract an example from the dataset
-    example = small_train_dataset[0]
-    # run the preprocess function on the example
-    #preprocess_function(example, tokenizer, max_length)
-
-
-
+      
 
     print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
@@ -158,6 +174,7 @@ def main() -> None:
         remove_columns=small_train_dataset.column_names
     )
 
+    print(f"Before filtering, {len(tokenized_train_dataset)} examples remain.")
     # Filter out examples where labels are all -100
     tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
     print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
@@ -198,7 +215,8 @@ def main() -> None:
     # 7. Initialize Optimizer and Scheduler
     # ------------------------------
 
-    # Calculate total training steps
+    # Calculate total training steps 
+    # (steps where parameters are updated, this is the number of backward passes)
     total_steps = (len(train_loader) // gradient_accumulation_steps) * num_epochs
 
     # Initialize the optimizer
@@ -261,4 +279,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    args = get_args()
+    main(args)
