@@ -143,6 +143,14 @@ def main() -> None:
     # 5. Apply Preprocessing
     # ------------------------------
 
+    # extract an example from the dataset
+    example = small_train_dataset[0]
+    # run the preprocess function on the example
+    #preprocess_function(example, tokenizer, max_length)
+
+
+
+
     print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),

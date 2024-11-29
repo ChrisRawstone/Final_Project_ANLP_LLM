@@ -1,24 +1,58 @@
+"""
+evaluation.py
+
+Evaluating LLM model on ScandiQA-DA dataset
+"""
+
 from scandeval import Benchmarker
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+import json
 
-# Initialize the Benchmarker with desired default settings
+# Load the base model and tokenizer with mismatched size handling
+base_model = AutoModelForCausalLM.from_pretrained(
+    "Qwen/Qwen2.5-0.5B",
+    ignore_mismatched_sizes=True,  # Ignore size mismatches
+    torch_dtype="auto",           # Automatically pick appropriate dtype
+    low_cpu_mem_usage=True,       # Reduce memory usage during loading
+)
+
+tokenizer = AutoTokenizer.from_pretrained("models/lora_first_iteration/step_1300")
+
+# Resize token embeddings to match the tokenizer's vocabulary size
+base_model.resize_token_embeddings(len(tokenizer))
+
+# Load the LoRA adapter
+lora_model = PeftModel.from_pretrained(
+    base_model,
+    "models/lora_first_iteration/step_1300",
+    torch_dtype="float16",  # Explicitly set to float16
+)
+
+# Save the fully adapted model
+lora_model.save_pretrained("models/lora_first_iteration/adapted_lora")
+tokenizer.save_pretrained("models/lora_first_iteration/adapted_lora")
+
+# Initialize the Benchmarker
 benchmark = Benchmarker(
-    progress_bar=True,             # Show progress bars
-    save_results=True,             # Save results to 'scandeval_benchmark_results.jsonl'
-    device="cuda",                 # Use GPU for evaluation
-    verbose=True,                   # Enable verbose logging
-    num_iterations=3,              # Number of iterations to run the benchmark
+    progress_bar=True,
+    save_results=True,
+    device="cuda",
+    verbose=True,
+    num_iterations=3,
 )
 
-# Run the benchmark on your local model
+# Run the benchmark with explicit dtype settings
 results = benchmark(
-    model="models/long_train_hpc/step_2600",  # Path to your local model
+    model="models/lora_first_iteration/adapted_lora",
     dataset="scandiqa-da",
-    language="da",  # Specify your language
-    device="cuda",  # Optional: Specify device (e.g., 'cuda' for GPU)
-    verbose=True  # Optional: Enable verbose output
+    language="da",
+    framework="pytorch",
+    trust_remote_code=True,
+    device="cuda",
+    verbose=True,
 )
 
-# Print the benchmark results
+# Print results
 for result in results:
-    print(result)
-
+    print(json.dumps(result, indent=2))

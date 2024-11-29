@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-train_model.py
+train_model_lora.py
 
 A script to train a causal language model on Danish question-answering data.
 Includes data preprocessing, training loop with evaluation, learning rate scheduling,
 logging with wandb, and saving the model after each epoch.
 
 Usage:
-    python train_model.py
+    python train_model_lora.py
 
 Ensure that the required datasets are available at the specified paths.
 """
@@ -24,7 +24,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup,
-    BitsAndBytesConfig,  # Import for quantization
+    BitsAndBytesConfig,
 )
 from torch.utils.data import DataLoader
 from typing import Optional, List
@@ -37,18 +37,16 @@ from utils import (
     evaluate,
     run_training_steps,
 )
-import wandb  # Import wandb
+import wandb
 
 import logging
 
 # Configure the logger
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
 
 # Import PEFT modules for LoRA and LoftQ
 from peft import LoraConfig, get_peft_model, replace_lora_weights_loftq
@@ -58,7 +56,8 @@ wandb.login()
 
 # Suppress tokenizer parallelism warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["WANDB_MODE"] = "disabled"
+# Disable wandb if not needed
+# os.environ["WANDB_MODE"] = "disabled"
 
 # ------------------------------
 # 2. Setup and Configuration
@@ -71,12 +70,12 @@ def main() -> None:
 
     # Check for GPU availability
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    print(f"Using device: {device}")
+    logger.info(f"Using device: {device}")
 
     # Configuration parameters
     model_name = "Qwen/Qwen2.5-0.5B"
     train_path = "data/processed/instruct_train_dataset"
-    validation_path = "data/processed/instruct_val_dataset"  # Corrected path
+    validation_path = "data/processed/instruct_val_dataset"
     batch_size = 2
     num_epochs = 1  # Adjust as needed
     learning_rate = 5e-5
@@ -87,6 +86,7 @@ def main() -> None:
     max_grad_norm = 1.0  # Gradient clipping
     num_workers = 4  # DataLoader workers
     output_dir = "models/lora_first_iteration"  # Directory to save models
+    save_steps = 500  # Adjust save steps as needed
 
     # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -108,7 +108,7 @@ def main() -> None:
             "seed": seed,
             "output_dir": output_dir,
         },
-        reinit=True
+        reinit=True,
     )
 
     # ------------------------------
@@ -120,35 +120,37 @@ def main() -> None:
 
     # Add special tokens
     special_tokens_dict = {
-        'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']
+        "additional_special_tokens": ["<|user|>", "<|assistant|>", "<|end_of_turn|>"]
     }
     num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-    print(f"Added {num_added_toks} special tokens to the tokenizer.")
+    logger.info(f"Added {num_added_toks} special tokens to the tokenizer.")
 
     # Define the quantization configuration
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
-        bnb_4bit_quant_type='nf4',  # Use 'nf4' quantization type
+        bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True,
-        bnb_4bit_compute_dtype=torch.float16,  # Could be torch.bfloat16 if supported
+        bnb_4bit_compute_dtype=torch.float16,
     )
 
     # Load the model with quantization
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         quantization_config=bnb_config,
-        device_map='auto',  # Automatically map model layers to devices
+        device_map="auto",
     )
 
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))
-    print(f"Resized model embeddings to {len(tokenizer)} tokens.")
+    logger.info(f"Resized model embeddings to {len(tokenizer)} tokens.")
 
-    # Create LoRA configuration
+
+
+    # Create LoRA configuration with correct target modules
     lora_config = LoraConfig(
         r=16,  # Low-rank update matrices rank
         lora_alpha=32,  # Scaling factor
-        target_modules="all-linear",  # Apply LoRA to all linear layers
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],  # Adjusted module names
         lora_dropout=0.1,
         bias="none",
         task_type="CAUSAL_LM",
@@ -157,17 +159,15 @@ def main() -> None:
     # Wrap the model with LoRA
     model = get_peft_model(model, lora_config)
 
-    # Apply LoftQ initialization
-    replace_lora_weights_loftq(model)
-
     # Print trainable parameters for verification
     trainable_params, all_param = model.get_nb_trainable_parameters()
 
     logger.info(
         f"Trainable params: {trainable_params:,d} || "
         f"All params: {all_param:,d} || "
-        f"Trainable%: {100 * trainable_params / all_param:.4f}"
+        f"Trainable%: {100 * trainable_params / all_param:.4f}%"
     )
+
 
     # Ensure the tokenizer uses the special tokens
     if tokenizer.pad_token is None:
@@ -178,41 +178,41 @@ def main() -> None:
     # ------------------------------
 
     # Load the datasets from disk
-    print("Loading datasets...")
+    logger.info("Loading datasets...")
     train_dataset, validation_dataset = load_datasets(train_path, validation_path)
 
-    # Print dataset information
-    print("\ntrain_dataset: \n", train_dataset)
-    print("\nvalidation_dataset:\n", validation_dataset)
+    # Log dataset information
+    logger.info(f"Loaded {len(train_dataset)} training examples.")
+    logger.info(f"Loaded {len(validation_dataset)} validation examples.")
 
     # No need to select a subset; use the entire dataset
-    small_train_dataset = train_dataset
+    small_train_dataset = train_dataset.shuffle(seed=seed).select(range(1000))
 
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
 
-    print("\nPreprocessing the training dataset...")
+    logger.info("Preprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),
         batched=True,
-        remove_columns=small_train_dataset.column_names
+        remove_columns=small_train_dataset.column_names,
     )
 
     # Filter out examples where labels are all -100
     tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
-    print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
+    logger.info(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
     # Preprocess the validation dataset
-    print("\nPreprocessing the validation dataset...")
+    logger.info("Preprocessing the validation dataset...")
     tokenized_val_dataset = validation_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),
         batched=True,
-        remove_columns=validation_dataset.column_names
+        remove_columns=validation_dataset.column_names,
     )
 
     tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
-    print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
+    logger.info(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
 
     # ------------------------------
     # 6. Create DataLoaders
@@ -223,17 +223,19 @@ def main() -> None:
         tokenized_train_dataset,
         tokenizer,
         batch_size=batch_size,
-        num_workers=num_workers
+        num_workers=num_workers,
     )
 
     val_loader = create_dataloader(
         tokenized_val_dataset,
         tokenizer,
         batch_size=batch_size,
-        num_workers=num_workers
+        num_workers=num_workers,
     )
 
-    print(f"\nCreated DataLoaders with batch size {batch_size} and {num_workers} workers.")
+    logger.info(
+        f"Created DataLoaders with batch size {batch_size} and {num_workers} workers."
+    )
 
     # ------------------------------
     # 7. Initialize Optimizer and Scheduler
@@ -241,15 +243,24 @@ def main() -> None:
 
     # Calculate total training steps
     total_steps = (len(train_loader) // gradient_accumulation_steps) * num_epochs
+    logger.info(f"Total training steps: {total_steps}")
 
-    # Initialize the optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    # Only include trainable parameters in the optimizer
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
+
+    # Log optimizer's parameters
+    num_optimizer_params = sum(p.numel() for p in optimizer.param_groups[0]['params'])
+    logger.info(f"Number of parameters in optimizer: {num_optimizer_params}")
 
     # Initialize the learning rate scheduler
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
-        num_training_steps=total_steps
+        num_training_steps=total_steps,
     )
 
     # Initialize GradScaler if using mixed precision
@@ -275,7 +286,7 @@ def main() -> None:
     run_training_steps(
         model=model,
         train_loader=train_loader,
-        val_loader=val_loader,  # Pass the validation DataLoader
+        val_loader=val_loader,
         optimizer=optimizer,
         scheduler=scheduler,
         scaler=scaler,
@@ -287,10 +298,11 @@ def main() -> None:
         fp16=fp16,
         max_grad_norm=max_grad_norm,
         num_steps_per_epoch=None,
-        output_dir=output_dir
+        output_dir=output_dir,
+        save_steps=save_steps,
     )
 
-    print("\nTraining script completed.")
+    logger.info("Training script completed.")
 
     # Finish wandb run
     wandb.finish()

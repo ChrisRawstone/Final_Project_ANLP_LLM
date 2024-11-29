@@ -12,10 +12,15 @@ from transformers import (
     PreTrainedModel,
 )
 from datasets import Dataset
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
 import wandb
 import math  # For perplexity calculation
+import logging
+import time
+
+# Configure the logger
+logger = logging.getLogger(__name__)
 
 def set_seed(seed: int) -> None:
     """
@@ -36,7 +41,7 @@ def set_seed(seed: int) -> None:
 
 def load_datasets(
     train_path: str, validation_path: str
-) -> (Dataset, Dataset):
+) -> Tuple[Dataset, Dataset]:
     """
     Loads training and validation datasets from disk.
 
@@ -57,7 +62,7 @@ def load_datasets(
 def preprocess_function(
     examples: Dict[str, List[str]],
     tokenizer: PreTrainedTokenizer,
-    max_length: int = 256
+    max_length: int = 256,
 ) -> Dict[str, List[List[int]]]:
     """
     Preprocesses the dataset by constructing prompts, tokenizing, and aligning labels.
@@ -75,25 +80,24 @@ def preprocess_function(
     labels = []
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
-
+    
     for instruction, input_text, output_text in zip(
-        examples.get('instructions', [''] * len(examples['inputs'])),
-        examples['inputs'],
-        examples['outputs']
+        examples.get("instructions", [""] * len(examples["inputs"])),
+        examples["inputs"],
+        examples["outputs"],
     ):
         # Construct the prompt
-        prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"
-
+        prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"        
         # Tokenize the prompt
         tokenized = tokenizer(
             prompt,
             truncation=True,
             max_length=max_length,
             padding=False,
-            return_attention_mask=True
+            return_attention_mask=True,
         )
-        input_ids = tokenized['input_ids']
-        attention_mask = tokenized['attention_mask']
+        input_ids = tokenized["input_ids"]
+        attention_mask = tokenized["attention_mask"]
 
         # Initialize labels with -100 to ignore in loss computation
         labels_ids = [-100] * len(input_ids)
@@ -102,26 +106,30 @@ def preprocess_function(
         try:
             assistant_token_position = input_ids.index(assistant_token_id)
             # Set labels for the assistant's response
-            labels_ids[assistant_token_position + 1:] = input_ids[assistant_token_position + 1:]
+            labels_ids[assistant_token_position + 1 :] = input_ids[assistant_token_position + 1 :]
         except ValueError:
             # Assistant token not found
             missing_assistant_token += 1
             # All labels remain -100, meaning this example will be ignored in loss computation
 
-        inputs.append({
-            'input_ids': input_ids,
-            'attention_mask': attention_mask
-        })
+        inputs.append(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+            }
+        )
         labels.append(labels_ids)
 
     # Log the number of examples where the assistant token was not found
     if missing_assistant_token > 0:
-        print(f"Number of examples where assistant token was not found: {missing_assistant_token}")
+        logger.warning(
+            f"Number of examples where assistant token was not found: {missing_assistant_token}"
+        )
 
     return {
-        'input_ids': [x['input_ids'] for x in inputs],
-        'attention_mask': [x['attention_mask'] for x in inputs],
-        'labels': labels
+        "input_ids": [x["input_ids"] for x in inputs],
+        "attention_mask": [x["attention_mask"] for x in inputs],
+        "labels": labels,
     }
 
 
@@ -135,14 +143,14 @@ def filter_empty_labels(example: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the example has at least one label not equal to -100.
     """
-    return any(label != -100 for label in example['labels'])
+    return any(label != -100 for label in example["labels"])
 
 
 def create_dataloader(
     dataset: Dataset,
     tokenizer: PreTrainedTokenizer,
     batch_size: int = 2,
-    num_workers: int = 4
+    num_workers: int = 4,
 ) -> DataLoader:
     """
     Creates a DataLoader with a custom collate function for dynamic padding.
@@ -156,6 +164,7 @@ def create_dataloader(
     Returns:
         DataLoader: The DataLoader instance.
     """
+
     def collate_fn(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         """
         Custom collate function to handle dynamic padding for variable-length sequences.
@@ -166,9 +175,9 @@ def create_dataloader(
         Returns:
             Dict[str, torch.Tensor]: Padded input_ids, attention_mask, and labels.
         """
-        input_ids = [torch.tensor(example['input_ids']) for example in batch]
-        attention_masks = [torch.tensor(example['attention_mask']) for example in batch]
-        labels = [torch.tensor(example['labels']) for example in batch]
+        input_ids = [torch.tensor(example["input_ids"]) for example in batch]
+        attention_masks = [torch.tensor(example["attention_mask"]) for example in batch]
+        labels = [torch.tensor(example["labels"]) for example in batch]
 
         input_ids_padded = torch.nn.utils.rnn.pad_sequence(
             input_ids, batch_first=True, padding_value=tokenizer.pad_token_id
@@ -181,9 +190,9 @@ def create_dataloader(
         )
 
         return {
-            'input_ids': input_ids_padded,
-            'attention_mask': attention_masks_padded,
-            'labels': labels_padded,
+            "input_ids": input_ids_padded,
+            "attention_mask": attention_masks_padded,
+            "labels": labels_padded,
         }
 
     return DataLoader(
@@ -191,7 +200,7 @@ def create_dataloader(
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_fn,
-        num_workers=num_workers
+        num_workers=num_workers,
     )
 
 
@@ -200,7 +209,7 @@ def evaluate(
     tokenizer: PreTrainedTokenizer,
     device: torch.device,
     prompts: List[str],
-    max_new_tokens: int = 256
+    max_new_tokens: int = 256,
 ) -> List[str]:
     """
     Generates responses for a list of prompts using sampling methods.
@@ -219,7 +228,7 @@ def evaluate(
     responses = []
     with torch.no_grad():
         for prompt in prompts:
-            input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+            input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
             attention_mask = (input_ids != tokenizer.pad_token_id).long()
 
             output_ids = model.generate(
@@ -233,11 +242,11 @@ def evaluate(
                 num_return_sequences=1,
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
-                repetition_penalty=1.2,       # Added repetition penalty
-                no_repeat_ngram_size=3,       # Prevent repeating n-grams of size 3
+                repetition_penalty=1.2,
+                no_repeat_ngram_size=3,
             )
             # Decode only the generated tokens
-            generated_tokens = output_ids[0][input_ids.shape[-1]:]
+            generated_tokens = output_ids[0][input_ids.shape[-1] :]
             response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             responses.append(response.strip())
     model.train()
@@ -254,18 +263,39 @@ def calculate_perplexity(loss: float) -> float:
     Returns:
         float: The perplexity.
     """
-    return math.exp(loss)
+    try:
+        return math.exp(loss)
+    except OverflowError:
+        logger.warning("Perplexity calculation resulted in overflow. Returning infinity.")
+        return float("inf")
 
-def save_model_checkpoint(step: int, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, output_dir: str):
+
+def save_model_checkpoint(
+    step: int, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, output_dir: str
+):
+    """
+    Save the model and tokenizer after resizing embeddings.
+    """
     save_path = os.path.join(output_dir, f"step_{step}")
     os.makedirs(save_path, exist_ok=True)
-    print(f"\nSaving model at step {step} to {save_path}...")
+    logger.info(f"Saving model at step {step} to {save_path}...")
+
+    # Resize token embeddings before saving
+    model.resize_token_embeddings(len(tokenizer))
     model.save_pretrained(save_path)
     tokenizer.save_pretrained(save_path)
-    print(f"Model and tokenizer saved at step {step}.")
 
-def evaluate_model(model: PreTrainedModel, val_loader: DataLoader, device: torch.device, fp16: bool) -> Tuple[float, float]:
-    print("\nEvaluating the model on the validation dataset...")
+    logger.info(f"Model and tokenizer saved at step {step}.")
+
+
+
+def evaluate_model(
+    model: PreTrainedModel,
+    val_loader: DataLoader,
+    device: torch.device,
+    fp16: bool,
+) -> Tuple[float, float]:
+    logger.info("Evaluating the model on the validation dataset...")
     val_loss = 0.0
     model.eval()
     with torch.no_grad():
@@ -273,16 +303,17 @@ def evaluate_model(model: PreTrainedModel, val_loader: DataLoader, device: torch
             batch = {k: v.to(device) for k, v in batch.items()}
             with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    labels=batch['labels']
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    labels=batch["labels"],
                 )
                 val_loss += outputs.loss.item()
     val_loss /= len(val_loader)
     val_perplexity = calculate_perplexity(val_loss)
-    print(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
+    logger.info(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
     model.train()
     return val_loss, val_perplexity
+
 
 def log_evaluation(
     epoch: int,
@@ -293,24 +324,27 @@ def log_evaluation(
     evaluation_prompts: List[str],
     model: PreTrainedModel,
     tokenizer: PreTrainedTokenizer,
-    device: torch.device
+    device: torch.device,
 ):
-    print("\nEvaluating the model with Danish prompts...")
+    logger.info("Evaluating the model with Danish prompts...")
     responses = evaluate(model, tokenizer, device, evaluation_prompts)
     table = wandb.Table(columns=["Prompt", "Response"])
     for prompt, response in zip(evaluation_prompts, responses):
-        print(f"\nPrompt: {prompt}\nResponse: {response}")
+        logger.info(f"\nPrompt: {prompt}\nResponse: {response}")
         table.add_data(prompt, response)
     avg_epoch_loss = epoch_loss / max(1, global_step)
     epoch_perplexity = calculate_perplexity(avg_epoch_loss)
-    wandb.log({
-        'epoch': epoch + 1,
-        'avg_epoch_loss': avg_epoch_loss,
-        'epoch_perplexity': epoch_perplexity,
-        'validation_loss': val_loss,
-        'validation_perplexity': val_perplexity,
-        "evaluation_responses": table
-    })
+    wandb.log(
+        {
+            "epoch": epoch + 1,
+            "avg_epoch_loss": avg_epoch_loss,
+            "epoch_perplexity": epoch_perplexity,
+            "validation_loss": val_loss,
+            "validation_perplexity": val_perplexity,
+            "evaluation_responses": table,
+        }
+    )
+
 
 def run_training_steps(
     model: PreTrainedModel,
@@ -328,21 +362,23 @@ def run_training_steps(
     max_grad_norm: float = 1.0,
     num_steps_per_epoch: Optional[int] = None,
     output_dir: str = "models/checkpoint",
-    save_steps: int = 1300
+    save_steps: int = 1300,
 ) -> None:
     """
     Runs the training loop with evaluation and wandb logging.
     Saves the model every `save_steps` steps.
     """
     model.train()
-    print("\nStarting training...")
+    logger.info("Starting training...")
 
     global_step = 0
 
     for epoch in range(num_epochs):
-        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+        logger.info(f"Epoch {epoch + 1}/{num_epochs}")
         epoch_loss = 0.0
         optimizer.zero_grad()
+
+        start_time = time.time()
 
         for step, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
             if num_steps_per_epoch and step >= num_steps_per_epoch:
@@ -352,14 +388,14 @@ def run_training_steps(
 
             with torch.cuda.amp.autocast(enabled=fp16):
                 outputs = model(
-                    input_ids=batch['input_ids'],
-                    attention_mask=batch['attention_mask'],
-                    labels=batch['labels']
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    labels=batch["labels"],
                 )
                 loss = outputs.loss / gradient_accumulation_steps
 
             if torch.isnan(loss):
-                print(f"Epoch {epoch + 1}, Step {step + 1}: Loss is nan. Exiting training.")
+                logger.error(f"Epoch {epoch + 1}, Step {step + 1}: Loss is nan. Exiting training.")
                 return
 
             if fp16 and scaler is not None:
@@ -385,22 +421,41 @@ def run_training_steps(
                 current_lr = scheduler.get_last_lr()[0]
                 avg_loss = epoch_loss / global_step
                 perplexity = calculate_perplexity(avg_loss)
-                wandb.log({
-                    'epoch': epoch + 1,
-                    'global_step': global_step,
-                    'learning_rate': current_lr,
-                    'loss': avg_loss,
-                    'perplexity': perplexity
-                })
+                wandb.log(
+                    {
+                        "epoch": epoch + 1,
+                        "global_step": global_step,
+                        "learning_rate": current_lr,
+                        "loss": avg_loss,
+                        "perplexity": perplexity,
+                    }
+                )
 
                 if global_step % save_steps == 0:
                     save_model_checkpoint(global_step, model, tokenizer, output_dir)
-                    val_loss, val_perplexity = evaluate_model(model, val_loader, device, fp16)
-                    log_evaluation(epoch, epoch_loss, global_step, val_loss, val_perplexity, evaluation_prompts, model, tokenizer, device)
+                    val_loss, val_perplexity = evaluate_model(
+                        model, val_loader, device, fp16
+                    )
+                    log_evaluation(
+                        epoch,
+                        epoch_loss,
+                        global_step,
+                        val_loss,
+                        val_perplexity,
+                        evaluation_prompts,
+                        model,
+                        tokenizer,
+                        device,
+                    )
 
-            if (step + 1) % (10 * gradient_accumulation_steps) == 0:
-                avg_loss = epoch_loss / max(1, global_step)
-                print(f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}")
+                if (step + 1) % (10 * gradient_accumulation_steps) == 0:
+                    avg_loss = epoch_loss / max(1, global_step)
+                    elapsed_time = time.time() - start_time
+                    logger.info(
+                        f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}, "
+                        f"Elapsed Time = {elapsed_time:.2f}s"
+                    )
+                    start_time = time.time()
 
         if (step + 1) % gradient_accumulation_steps != 0:
             if fp16 and scaler is not None:
@@ -416,7 +471,7 @@ def run_training_steps(
 
     final_model_path = os.path.join(output_dir, "final_model")
     os.makedirs(final_model_path, exist_ok=True)
-    print(f"\nSaving model to {final_model_path}...")
+    logger.info(f"Saving final model to {final_model_path}...")
     model.save_pretrained(final_model_path)
     tokenizer.save_pretrained(final_model_path)
-    print("\nTraining completed successfully.")
+    logger.info("Training completed successfully.")
