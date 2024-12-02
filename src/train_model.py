@@ -33,9 +33,10 @@ from utils import (
     preprocess_function,
     filter_empty_labels,
     create_dataloader,
-    evaluate,
     run_training_steps,
 )
+
+from src.evaluation import evaluate_scandeval
 from parser import get_args
 import wandb  # Import wandb
 
@@ -159,9 +160,9 @@ def main(args) -> None:
     print("\ntrain_dataset: \n", train_dataset)
     print("\nvalidation_dataset:\n", validation_dataset)
 
-    # No need to select a subset; use the entire dataset
-    small_train_dataset = train_dataset
-
+    # No need to select a subset; use the entire dataset # debug, remember to remove
+    small_train_dataset = train_dataset    #.select(range(1000))
+    validation_dataset = validation_dataset   #.select(range(250))
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
@@ -209,6 +210,8 @@ def main(args) -> None:
         num_workers=num_workers
     )
 
+    
+    
     print(f"\nCreated DataLoaders with batch size {batch_size} and {num_workers} workers.")
 
     # ------------------------------
@@ -235,10 +238,6 @@ def main(args) -> None:
     # ------------------------------
     # 8. Prepare Evaluation Prompts
     # ------------------------------
-
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Trainable parameter: {name}")
 
 
     # Example Danish question prompts
@@ -276,6 +275,9 @@ def main(args) -> None:
 
     # Finish wandb run
     wandb.finish()
+
+    evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/instruction/{timestamp}")
+
 
 
 if __name__ == "__main__":

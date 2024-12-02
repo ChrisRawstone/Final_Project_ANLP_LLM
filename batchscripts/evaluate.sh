@@ -1,7 +1,7 @@
 #!/bin/sh
 #BSUB -J Evaluate
-#BSUB -o logs/Train%J.out
-#BSUB -e logs/Train%J.err
+#BSUB -o logs/Eval%J.out
+#BSUB -e logs/Eval%J.err
 #BSUB -q gpuv100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -n 16

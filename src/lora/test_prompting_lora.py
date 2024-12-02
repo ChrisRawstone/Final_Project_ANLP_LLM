@@ -2,19 +2,25 @@
 # -*- coding: utf-8 -*-
 
 """
-test_model.py
+test_model_lora.py
 
-A script to load a Qwen2.5 causal language model and generate responses for given prompts.
+A script to load a trained LoRA-adapted and quantized causal language model,
+and generate responses for given prompts.
 
 Usage:
-    python test_model.py
+    python test_model_lora.py
 
-Ensure that the pretrained model is available at the specified path.
+Ensure that the trained model is available at the specified path.
 """
 
 import os
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    BitsAndBytesConfig,
+)
+from peft import PeftModel
 import logging
 
 # Configure the logger
@@ -34,8 +40,10 @@ def main():
     logger.info(f"Using device: {device}")
 
     # Configuration parameters
-    model_name = "models/instruction/20241202155739/step_13000"
+    model_name = "Qwen/Qwen2.5-0.5B"
+    model_path = "models/lora_first_iteration/final_model"  # Path to the saved model
     max_length = 512  # Adjust as needed
+    fp16 = True  # Enable mixed precision
 
     # Load the tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -47,12 +55,30 @@ def main():
     num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
     logger.info(f"Added {num_added_toks} special tokens to the tokenizer.")
 
-    # Load the base model
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    # Define the quantization configuration
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_compute_dtype=torch.float16,
+    )
+
+    # Load the base model with quantization
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb_config,
+        device_map="auto",
+    )
 
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))
     logger.info(f"Resized model embeddings to {len(tokenizer)} tokens.")
+
+    # Load the LoRA adapted model
+    model = PeftModel.from_pretrained(
+        model,
+        model_path,
+    )
 
     model.to(device)
 

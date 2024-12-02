@@ -5,20 +5,20 @@ Utility functions for training the language model.
 """
 
 import os
+import time
+import math
+import random
+import logging
+import numpy as np
+from copy import copy
+from typing import Any, Dict, List, Optional, Tuple
+
 import torch
 from torch.utils.data import DataLoader
-from transformers import (
-    PreTrainedTokenizer,
-    PreTrainedModel,
-)
+from transformers import PreTrainedTokenizer, PreTrainedModel
 from datasets import Dataset
-from typing import Any, Dict, List, Optional, Tuple
 from tqdm import tqdm
 import wandb
-import math  # For perplexity calculation
-import logging
-import time
-import numpy as np
 
 # Configure the logger
 logger = logging.getLogger(__name__)
@@ -30,9 +30,6 @@ def set_seed(seed: int) -> None:
     Args:
         seed (int): The seed value to set.
     """
-    import random
-    import numpy as np
-
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -40,9 +37,7 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def load_datasets(
-    train_path: str, validation_path: str
-) -> Tuple[Dataset, Dataset]:
+def load_datasets(train_path: str, validation_path: str) -> Tuple[Dataset, Dataset]:
     """
     Loads training and validation datasets from disk.
 
@@ -82,25 +77,16 @@ def preprocess_function(
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
 
-    user_prompt_lengths = []
-    assistant_prompt_lengths = []
-    
     for instruction, input_text, output_text in zip(
         examples.get("instructions", [""] * len(examples["inputs"])),
         examples["inputs"],
         examples["outputs"],
-    ):  
-        #contruct the prompt
+    ):
+        # Construct the prompt
         user_prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|>"
-        #user_prompt_lengths.append(len(tokenizer(user_prompt)["input_ids"]))
-
         assistant_prompt = f"<|assistant|>{output_text}<|end_of_turn|>"
-        #assistant_prompt_lengths.append(len(tokenizer(assistant_prompt)["input_ids"]))
-
         prompt = f"{user_prompt}{assistant_prompt}"
 
-        # Construct the prompt
-        #prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|><|assistant|>{output_text}<|end_of_turn|>"        
         # Tokenize the prompt
         tokenized = tokenizer(
             prompt,
@@ -119,7 +105,7 @@ def preprocess_function(
         try:
             assistant_token_position = input_ids.index(assistant_token_id)
             # Set labels for the assistant's response
-            labels_ids[assistant_token_position + 1 :] = input_ids[assistant_token_position + 1 :]
+            labels_ids[assistant_token_position + 1:] = input_ids[assistant_token_position + 1:]
         except ValueError:
             # Assistant token not found
             missing_assistant_token += 1
@@ -138,13 +124,6 @@ def preprocess_function(
         logger.warning(
             f"Number of examples where assistant token was not found: {missing_assistant_token}"
         )
-
-    # get the average length of the prompts
-    # avg_user_prompt_length = np.mean(user_prompt_lengths)
-    # avg_assistant_prompt_length = np.mean(assistant_prompt_lengths)
-
-    # print(f"Average user prompt length: {avg_user_prompt_length}")
-    # print(f"Average assistant prompt length: {avg_assistant_prompt_length}")
 
     return {
         "input_ids": [x["input_ids"] for x in inputs],
@@ -266,7 +245,7 @@ def evaluate(
                 no_repeat_ngram_size=3,
             )
             # Decode only the generated tokens
-            generated_tokens = output_ids[0][input_ids.shape[-1] :]
+            generated_tokens = output_ids[0][input_ids.shape[-1]:]
             response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             responses.append(response.strip())
     model.train()
@@ -295,6 +274,12 @@ def save_model_checkpoint(
 ):
     """
     Save the model and tokenizer after resizing embeddings.
+
+    Args:
+        step (int): The current training step.
+        model (PreTrainedModel): The model to save.
+        tokenizer (PreTrainedTokenizer): The tokenizer to save.
+        output_dir (str): The directory to save the model and tokenizer.
     """
     save_path = os.path.join(output_dir, f"step_{step}")
     os.makedirs(save_path, exist_ok=True)
@@ -308,13 +293,24 @@ def save_model_checkpoint(
     logger.info(f"Model and tokenizer saved at step {step}.")
 
 
-
 def evaluate_model(
     model: PreTrainedModel,
     val_loader: DataLoader,
     device: torch.device,
     fp16: bool,
 ) -> Tuple[float, float]:
+    """
+    Evaluates the model on the validation dataset.
+
+    Args:
+        model (PreTrainedModel): The model to evaluate.
+        val_loader (DataLoader): The validation DataLoader.
+        device (torch.device): The device to run on.
+        fp16 (bool): Whether to use mixed precision.
+
+    Returns:
+        Tuple[float, float]: The validation loss and perplexity.
+    """
     logger.info("Evaluating the model on the validation dataset...")
     val_loss = 0.0
     model.eval()
@@ -333,37 +329,6 @@ def evaluate_model(
     logger.info(f"Validation Loss: {val_loss:.4f}, Validation Perplexity: {val_perplexity:.4f}")
     model.train()
     return val_loss, val_perplexity
-
-
-def log_evaluation(
-    epoch: int,
-    epoch_loss: float,
-    global_step: int,
-    val_loss: float,
-    val_perplexity: float,
-    evaluation_prompts: List[str],
-    model: PreTrainedModel,
-    tokenizer: PreTrainedTokenizer,
-    device: torch.device,
-):
-    logger.info("Evaluating the model with Danish prompts...")
-    responses = evaluate(model, tokenizer, device, evaluation_prompts)
-    table = wandb.Table(columns=["Prompt", "Response"])
-    for prompt, response in zip(evaluation_prompts, responses):
-        logger.info(f"\nPrompt: {prompt}\nResponse: {response}")
-        table.add_data(prompt, response)
-    avg_epoch_loss = epoch_loss / max(1, global_step)
-    epoch_perplexity = calculate_perplexity(avg_epoch_loss)
-    wandb.log(
-        {
-            "epoch": epoch + 1,
-            "avg_epoch_loss": avg_epoch_loss,
-            "epoch_perplexity": epoch_perplexity,
-            "validation_loss": val_loss,
-            "validation_perplexity": val_perplexity,
-            "evaluation_responses": table,
-        }
-    )
 
 
 def run_training_steps(
@@ -387,12 +352,38 @@ def run_training_steps(
     """
     Runs the training loop with evaluation and wandb logging.
     Saves the model every `save_steps` steps.
+
+    Args:
+        model (PreTrainedModel): The model to train.
+        train_loader (DataLoader): The training DataLoader.
+        val_loader (DataLoader): The validation DataLoader.
+        optimizer (torch.optim.Optimizer): The optimizer.
+        scheduler (torch.optim.lr_scheduler.LambdaLR): The learning rate scheduler.
+        scaler (Optional[torch.cuda.amp.GradScaler]): GradScaler for mixed precision.
+        device (torch.device): The device to run on.
+        evaluation_prompts (List[str]): Prompts for evaluation.
+        tokenizer (PreTrainedTokenizer): The tokenizer.
+        num_epochs (int, optional): Number of epochs. Defaults to 3.
+        gradient_accumulation_steps (int, optional): Gradient accumulation steps. Defaults to 4.
+        fp16 (bool, optional): Whether to use mixed precision. Defaults to True.
+        max_grad_norm (float, optional): Max gradient norm for clipping. Defaults to 1.0.
+        num_steps_per_epoch (Optional[int], optional): Steps per epoch. Defaults to None.
+        output_dir (str, optional): Directory to save models. Defaults to "models/checkpoint".
+        save_steps (int, optional): Steps interval to save models. Defaults to 25.
     """
+    # Initialize W&B run and config
+    run = wandb.init(project="your_project_name", job_type="train")
+
+
+    # Create a W&B table to store evaluation results
+    evaluation_table = wandb.Table(columns=["Epoch", "Global Step", "Validation Loss", "Validation Perplexity", "Prompt", "Response"])
+
     model.train()
     logger.info("Starting training...")
 
     global_step = 0
     total_batches = 0
+
     for epoch in range(num_epochs):
         logger.info(f"Epoch {epoch + 1}/{num_epochs}")
         epoch_loss = 0.0
@@ -401,8 +392,6 @@ def run_training_steps(
         start_time = time.time()
 
         for step, _batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch + 1}")):
-                       
-          
             batch = {k: v.to(device) for k, v in _batch.items()}
 
             with torch.cuda.amp.autocast(enabled=fp16):
@@ -424,6 +413,7 @@ def run_training_steps(
 
             epoch_loss += loss.item() * gradient_accumulation_steps
             total_batches += 1
+
             if (step + 1) % gradient_accumulation_steps == 0:
                 if fp16 and scaler is not None:
                     scaler.unscale_(optimizer)
@@ -438,38 +428,53 @@ def run_training_steps(
 
                 global_step += 1
                 current_lr = scheduler.get_last_lr()[0]
-                #avg_loss = epoch_loss / global_step
                 avg_loss = epoch_loss / total_batches
                 perplexity = calculate_perplexity(avg_loss)
+
+                # Log training metrics to W&B
                 wandb.log(
                     {
                         "epoch": epoch + 1,
                         "global_step": global_step,
                         "learning_rate": current_lr,
-                        "loss": avg_loss,
-                        "perplexity": perplexity,
-                    }
+                        "training_loss": avg_loss,
+                        "training_perplexity": perplexity,
+                    },
+                    step=global_step
                 )
 
+                # Perform evaluation and logging at specified intervals
                 if global_step % save_steps == 0:
                     save_model_checkpoint(global_step, model, tokenizer, output_dir)
                     val_loss, val_perplexity = evaluate_model(
                         model, val_loader, device, fp16
                     )
-                    log_evaluation(
-                        epoch,
-                        epoch_loss,
-                        global_step,
-                        val_loss,
-                        val_perplexity,
-                        evaluation_prompts,
-                        model,
-                        tokenizer,
-                        device,
+
+                    # Log validation metrics to W&B
+                    wandb.log(
+                        {
+                            "validation_loss": val_loss,
+                            "validation_perplexity": val_perplexity,
+                        },
+                        step=global_step
                     )
 
+                    # Evaluate prompts and collect responses
+                    responses = evaluate(model, tokenizer, device, evaluation_prompts)
+                    for prompt, response in zip(evaluation_prompts, responses):
+                        logger.info(f"\nPrompt: {prompt}\nResponse: {response}")
+                        evaluation_table.add_data(
+                            epoch + 1,
+                            global_step,
+                            val_loss,
+                            val_perplexity,
+                            prompt,
+                            response
+                        )
+
+                # Log intermediate progress
                 if (step + 1) % (10 * gradient_accumulation_steps) == 0:
-                    avg_loss = epoch_loss / max(1, global_step)
+                    avg_loss = epoch_loss / total_batches
                     elapsed_time = time.time() - start_time
                     logger.info(
                         f"Epoch {epoch + 1}, Step {step + 1}: Avg Loss = {avg_loss:.4f}, "
@@ -477,6 +482,7 @@ def run_training_steps(
                     )
                     start_time = time.time()
 
+        # Handle any remaining gradients
         if (step + 1) % gradient_accumulation_steps != 0:
             if fp16 and scaler is not None:
                 scaler.unscale_(optimizer)
@@ -489,9 +495,16 @@ def run_training_steps(
             scheduler.step()
             optimizer.zero_grad()
 
+    # Save the final model
     final_model_path = os.path.join(output_dir, "final_model")
     os.makedirs(final_model_path, exist_ok=True)
     logger.info(f"Saving final model to {final_model_path}...")
     model.save_pretrained(final_model_path)
     tokenizer.save_pretrained(final_model_path)
     logger.info("Training completed successfully.")
+
+    # Log the evaluation table to W&B after training
+    run.log({"evaluation_responses": evaluation_table})
+
+    # Finish the W&B run
+    run.finish()

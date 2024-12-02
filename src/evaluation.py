@@ -1,7 +1,7 @@
 """
 evaluation_all_models_with_checkpoint.py
 
-Evaluates all LLM models in the "20241129204056" folder on the ScandiQA-DA dataset.
+Evaluates all LLM models in the specified folder on the ScandiQA-DA dataset.
 Saves the results incrementally to a CSV file and plots the evaluation metrics.
 Implements checkpointing to allow resuming from the last saved state in case of interruptions.
 """
@@ -14,16 +14,7 @@ import statistics
 import math
 from scandeval import Benchmarker
 
-# Constants
-MODEL_DIR = "models/instruction/20241129204056"
-RESULT_DIR = "result"
-CSV_FILENAME = "evaluation_results.csv"
-PLOT_FILENAME = "evaluation_plot.png"
-DATASET = "scandiqa-da"
-LANGUAGE = "da"
-FRAMEWORK = "pytorch"
-DEVICE = "cuda"
-NUM_ITERATIONS = 3
+
 
 def get_sorted_model_paths(model_dir):
     """
@@ -123,8 +114,8 @@ def plot_results(csv_path, plot_path):
             match = re.match(r"step_(\d+)", model_name)
             if match:
                 return int(match.group(1))
-            elif model_name.lower() == "final_model":
-                return 999999  # Assign a high step number for final_model
+            # elif model_name.lower() == "final_model":
+            #     return 999999  # Assign a high step number for final_model
             else:
                 return None
 
@@ -170,7 +161,9 @@ def plot_results(csv_path, plot_path):
     except Exception as e:
         print(f"Error plotting results: {e}")
 
-def main():
+
+
+def evaluate_scandeval(MODEL_DIR, RESULT_DIR, CSV_FILENAME = "evaluation_results.csv", PLOT_FILENAME = "evaluation_plot.png", DATASET = "scandiqa-da", LANGUAGE = "da", FRAMEWORK = "pytorch", DEVICE = "cuda", NUM_ITERATIONS = 5):
     # Ensure result directory exists
     ensure_directory(RESULT_DIR)
 
@@ -301,4 +294,11 @@ def main():
     plot_results(csv_path, plot_path)
 
 if __name__ == "__main__":
-    main()
+    # Constants
+    timestamp = "20241202200154"
+
+    MODEL_DIR = f"models/instruction/{timestamp}"
+    RESULT_DIR = f"result/instruction/{timestamp}"
+    
+    
+    evaluate_scandeval(MODEL_DIR, RESULT_DIR)
