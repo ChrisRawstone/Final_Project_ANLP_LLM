@@ -1,62 +1,38 @@
 """
-train_model.py
-
-A script to train a causal language model on Danish question-answering data.
-Includes data preprocessing, training loop with evaluation, learning rate scheduling,
-logging with wandb, and saving the model after each epoch.
-
-Usage:
-    python train_model.py
-
-Ensure that the required datasets are available at the specified paths.
+Main script to train a causal language model on Danish question-answering data.
 """
-
 # ------------------------------
 # 1. Imports and Configuration
 # ------------------------------
-import argparse
 import os
-import torch
 from datetime import datetime
+
+import torch
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
-    get_linear_schedule_with_warmup,
+    get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 )
-from torch.utils.data import DataLoader
-from typing import Optional, List
+import wandb
+wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from utils import (
     set_seed,
-    load_datasets,
-    preprocess_function,
-    filter_empty_labels,
-    create_dataloader,
-    run_training_steps,
-)
-
+    create_dataloader, 
+    filter_empty_labels)
+from utils_instruction import preprocess_function
+from training import run_training_steps
 from evaluation import evaluate_scandeval
 from data.make_dataset import make_instruction_data
 from parser import get_args
-import wandb  
-
-# Replace with your actual wandb API key or ensure you are logged in via the command line
-wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
-
-# Suppresss tokenizer parallelism warning
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-#os.environ["WANDB_MODE"] = "Disabled"
-
-# ------------------------------
-# 2. Setup and Configuration
-# ------------------------------
 
 def main(args) -> None:
-
-    # Configuration parameters
     model_name = "Qwen/Qwen2.5-0.5B"
     batch_size = args.batch_size
     num_epochs = args.num_epochs
     learning_rate = args.learning_rate
+    lr_scheduler = args.lr_scheduler
     weight_decay = args.weight_decay
     max_length = args.max_length
     gradient_accumulation_steps = args.gradient_accumulation_steps
@@ -65,26 +41,24 @@ def main(args) -> None:
     num_workers = args.num_workers
     seed = args.seed
 
+    # ------------------------------
+    # 2. Set Up Experiment
+    # ------------------------------
+    
     # Set random seeds for reproducibility    
     set_seed(seed)
-
-    # Check for GPU availability
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    print(f"Using device: {device}")
-
-
+    
+    # Create a timestamp for the output directory and save the configuration
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-       
     output_dir = f"models/instruction/{timestamp}"
-    # Create the output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     # save the configuration
-
     with open(f"{output_dir}/config.txt", "w") as f:
         f.write(f"model_name: {model_name}\n")
         f.write(f"batch_size: {batch_size}\n")
         f.write(f"num_epochs: {num_epochs}\n")
         f.write(f"learning_rate: {learning_rate}\n")
+        f.write(f"lr_scheduler: {lr_scheduler}\n")
         f.write(f"weight_decay: {weight_decay}\n")
         f.write(f"max_length: {max_length}\n")
         f.write(f"gradient_accumulation_steps: {gradient_accumulation_steps}\n")
@@ -92,6 +66,10 @@ def main(args) -> None:
         f.write(f"max_grad_norm: {max_grad_norm}\n")
         f.write(f"num_workers: {num_workers}\n")
         f.write(f"seed: {seed}\n")
+
+    # Check for GPU availability
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print(f"Using device: {device}")
 
     # Initialize wandb
     wandb.init(
@@ -102,6 +80,7 @@ def main(args) -> None:
             "batch_size": batch_size,
             "num_epochs": num_epochs,
             "learning_rate": learning_rate,
+            "lr_scheduler": lr_scheduler,
             "weight_decay": weight_decay,
             "max_length": max_length,
             "gradient_accumulation_steps": gradient_accumulation_steps,
@@ -111,9 +90,7 @@ def main(args) -> None:
             "seed": seed,
             "output_dir": output_dir,
         },
-        reinit=True
-
-    )
+        reinit=True)
 
     # ------------------------------
     # 3. Load Tokenizer and Model
@@ -123,9 +100,7 @@ def main(args) -> None:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     # Add special tokens
-    special_tokens_dict = {
-        'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']
-    }
+    special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
     num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
     print(f"Added {num_added_toks} special tokens to the tokenizer.")
 
@@ -146,7 +121,7 @@ def main(args) -> None:
         tokenizer.pad_token = tokenizer.eos_token_id
 
     # ------------------------------
-    # 4. Load and Inspect Data
+    # 4. Load Data
     # ------------------------------
 
     # Load the datasets from disk
@@ -164,18 +139,15 @@ def main(args) -> None:
     # ------------------------------
     # 5. Apply Preprocessing
     # ------------------------------
-      
-
     print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
         lambda examples: preprocess_function(examples, tokenizer, max_length),
         batched=True,
-        remove_columns=small_train_dataset.column_names
-    )
-
+        remove_columns=small_train_dataset.column_names)
+    
     print(f"Before filtering, {len(tokenized_train_dataset)} examples remain.")
-    # Filter out examples where labels are all -100
-    tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)
+
+    tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)  # Filter out examples where labels are all -100
     print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
     # Preprocess the validation dataset
@@ -208,27 +180,30 @@ def main(args) -> None:
         num_workers=num_workers
     )
 
-    
-    
     print(f"\nCreated DataLoaders with batch size {batch_size} and {num_workers} workers.")
 
     # ------------------------------
     # 7. Initialize Optimizer and Scheduler
     # ------------------------------
 
-    # Calculate total training steps 
-    # (steps where parameters are updated, this is the number of backward passes)
+    # Calculate total training steps (steps where parameters are updated, this is the number of backward passes)
     total_steps = (len(train_loader) // gradient_accumulation_steps) * num_epochs
 
     # Initialize the optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Initialize the learning rate scheduler
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
-        num_training_steps=total_steps
-    )
+    if lr_scheduler: 
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
+            num_training_steps=total_steps
+        )
+    else: 
+        scheduler = get_constant_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=total_steps // 10  # 10% of total steps for warm-up
+        )
 
     # Initialize GradScaler if using mixed precision
     scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
@@ -236,25 +211,19 @@ def main(args) -> None:
     # ------------------------------
     # 8. Prepare Evaluation Prompts
     # ------------------------------
-
-
-    # Example Danish question prompts
     evaluation_prompts = [
         "<|user|>Hvordan laver jeg en kop kaffe?<|end_of_turn|>",
         "<|user|>Hvad er meningen med livet?<|end_of_turn|>",
         "<|user|>Kan du forklare kvantemekanik?<|end_of_turn|>",
-        # Add more prompts as needed
     ]
 
     # ------------------------------
     # 9. Run the Training
     # ------------------------------
-
-    # Run the training with the enhanced training loop
     run_training_steps(
         model=model,
         train_loader=train_loader,
-        val_loader=val_loader,  # Pass the validation DataLoader
+        val_loader=val_loader,  
         optimizer=optimizer,
         scheduler=scheduler,
         scaler=scaler,
@@ -265,18 +234,14 @@ def main(args) -> None:
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        num_steps_per_epoch=None,
         output_dir=output_dir
     )
 
     print("\nTraining script completed.")
 
-    # Finish wandb run
-    wandb.finish()
+    wandb.finish() # Finish the wandb run
 
     evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/instruction/{timestamp}")
-
-
 
 if __name__ == "__main__":
     args = get_args()
