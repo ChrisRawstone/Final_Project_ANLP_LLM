@@ -11,8 +11,6 @@ Usage:
 Ensure that the required datasets are available at the specified paths.
 """
 
-
-
 # ------------------------------
 # 1. Imports and Configuration
 # ------------------------------
@@ -36,10 +34,10 @@ from utils import (
     run_training_steps,
 )
 
-from src.evaluation import evaluate_scandeval
+from evaluation import evaluate_scandeval
 from data.make_dataset import make_instruction_data
 from parser import get_args
-import wandb  # Import wandb
+import wandb  
 
 # Replace with your actual wandb API key or ensure you are logged in via the command line
 wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
