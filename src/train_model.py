@@ -37,6 +37,7 @@ from utils import (
 )
 
 from src.evaluation import evaluate_scandeval
+from data.make_dataset import make_instruction_data
 from parser import get_args
 import wandb  # Import wandb
 
@@ -55,8 +56,6 @@ def main(args) -> None:
 
     # Configuration parameters
     model_name = "Qwen/Qwen2.5-0.5B"
-    train_path = "data/processed/instruct_train_dataset"
-    validation_path = "data/processed/instruct_val_dataset"
     batch_size = args.batch_size
     num_epochs = args.num_epochs
     learning_rate = args.learning_rate
@@ -153,8 +152,8 @@ def main(args) -> None:
     # ------------------------------
 
     # Load the datasets from disk
-    print("Loading datasets...")
-    train_dataset, validation_dataset = load_datasets(train_path, validation_path)
+    print("Getting data...")
+    train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)
