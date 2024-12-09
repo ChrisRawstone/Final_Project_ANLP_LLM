@@ -17,9 +17,7 @@ module load cuda/11.8
 
 source venv/bin/activate
 
-# pip3 install -e .
-
-python src/train_model.py --max_length 512 --learning_rate 1e-6
+python src/instruction_main.py --max_length 512 --learning_rate 5e-04 
 
 # parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
 # parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")  

@@ -195,3 +195,5 @@ cython_debug/
 #.idea/
 
 env-anlp/*
+data/*
+batchscripts/NONAME_*

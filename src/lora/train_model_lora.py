@@ -28,7 +28,7 @@ from transformers import (
 )
 from torch.utils.data import DataLoader
 from typing import Optional, List
-from utils import (
+from src.utils import (
     set_seed,
     load_datasets,
     preprocess_function,
