@@ -5,7 +5,7 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
     parser.add_argument("--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")
-    parser.add_argument("--lr_scheduler", type=bool, default=False, help="Use learning rate scheduler")
+    parser.add_argument("--lr_scheduler", type=str, default="constant", help="Use learning rate scheduler")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay for optimizer")
     parser.add_argument("--max_length", type=int, default=256, help="Maximum sequence length")
     parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Steps for gradient accumulation")

@@ -15,4 +15,4 @@ module load cuda/11.8
 
 source env-anlp/bin/activate
 
-python src/instruction_main.py --batch_size 2 --num_epochs 1 --learning_rate 5e-5 --lr_scheduler False --weight_decay 0.01 --max_length 256
+python src/instruction_main.py --batch_size 4 --num_epochs 1 --learning_rate 5e-5 --lr_scheduler constant --weight_decay 0.01 --max_length 512
