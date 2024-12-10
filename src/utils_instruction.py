@@ -43,7 +43,7 @@ def preprocess_function(
             prompt,
             truncation=True,
             max_length=max_length,
-            padding=False,
+            padding='max_length',
             return_attention_mask=True,
         )
         input_ids = tokenized["input_ids"]
