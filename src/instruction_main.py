@@ -40,7 +40,11 @@ def main(args) -> None:
     max_grad_norm = args.max_grad_norm
     num_workers = args.num_workers
     seed = args.seed
-
+    data_openhermes = args.data_openhermes
+    data_skolegpt = args.data_skolegpt
+    data_aya = args.data_aya
+    shuffle = args.shuffle
+    
     # ------------------------------
     # 2. Set Up Experiment
     # ------------------------------
@@ -126,7 +130,7 @@ def main(args) -> None:
 
     # Load the datasets from disk
     print("Getting data...")
-    train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
+    train_dataset, validation_dataset = make_instruction_data(data_openhermes=data_openhermes, data_skolegpt=data_skolegpt, data_aya=data_aya, shuffle=shuffle)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)

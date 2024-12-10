@@ -6,9 +6,9 @@ def feature_map_data(dataset, feature_map):
         remove_columns=list(feature_map.keys())
     )
     
-def make_instruction_data(data_openhermed: True, data_skolegpt: True, data_aya: True, shuffle=True): 
+def make_instruction_data(data_openhermes: True, data_skolegpt: True, data_aya: True, shuffle=True): 
     # Load the datasets
-    if data_openhermed:  
+    if data_openhermes:  
         dataset1 = load_dataset("Mabeck/danish-OpenHermes")
         dataset1 = dataset1['train']
     if data_skolegpt:
@@ -28,7 +28,7 @@ def make_instruction_data(data_openhermed: True, data_skolegpt: True, data_aya: 
         "targets": "outputs"}
     
     standardized_datasets = []
-    if data_openhermed:
+    if data_openhermes:
         standardized_datasets.append(dataset1)
     if data_skolegpt:
         standardized_dataset2 = feature_map_data(dataset2, feature_map_data2)

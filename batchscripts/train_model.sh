@@ -1,25 +1,18 @@
 #!/bin/sh
-#BSUB -J Train
+#BSUB -J train_instruction
 #BSUB -o logs/Train%J.out
 #BSUB -e logs/Train%J.err
 #BSUB -q gpua100
-#BSUB -gpu "num=1:mode=exclusive_process"
-#BSUB -n 16
+#BSUB -n 16 
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=2G]"
-#BSUB -W 2:55
+#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -W 4:00
 #BSUB -N
-
-#BSUB 
 # end of BSUB options
 
 module load cuda/11.8
 
-source venv/bin/activate
+source env-anlp/bin/activate
 
-python src/instruction_main.py --max_length 512 --learning_rate 5e-04 
-
-# parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
-# parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")  
-# parser.add_argument("--max_length", type=int, default=256, help="Maximum sequence length")
-# parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Steps for gradient accumulation")
+python src/instruction_main.py --batch_size 2 --num_epochs 1 --learning_rate 5e-5 --lr_scheduler False --weight_decay 0.01 --max_length 256

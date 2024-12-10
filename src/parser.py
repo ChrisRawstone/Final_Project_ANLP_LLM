@@ -13,4 +13,8 @@ def get_args():
     parser.add_argument("--max_grad_norm", type=float, default=1.0, help="Maximum gradient norm for clipping")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument("--data_openhermes", type=bool, default=True, help="Use OpenHermes dataset")
+    parser.add_argument("--data_skolegpt", type=bool, default=True, help="Use data_skolegpt dataset")
+    parser.add_argument("--data_aya", type=bool, default=True, help="Use data_aya dataset")
+    parser.add_argument("--shuffle", type=bool, default=True, help="Use data shuffle")
     return parser.parse_args()
