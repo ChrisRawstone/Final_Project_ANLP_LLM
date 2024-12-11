@@ -295,10 +295,8 @@ def evaluate_scandeval(MODEL_DIR, RESULT_DIR, CSV_FILENAME = "evaluation_results
 
 if __name__ == "__main__":
     # Constants
-    timestamp = "20241202200154"
-
+    timestamp = "20241210233334"
     MODEL_DIR = f"models/instruction/{timestamp}"
     RESULT_DIR = f"result/instruction/{timestamp}"
-    
     
     evaluate_scandeval(MODEL_DIR, RESULT_DIR)
