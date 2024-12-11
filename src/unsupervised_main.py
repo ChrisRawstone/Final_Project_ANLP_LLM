@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 
 import torch
+from datasets import load_from_disk
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -101,9 +102,9 @@ def main(args) -> None:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     # Add special tokens
-    # special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
-    # num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-    # print(f"Added {num_added_toks} special tokens to the tokenizer.")
+    special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
+    num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+    print(f"Added {num_added_toks} special tokens to the tokenizer.")
 
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(model_name)
@@ -111,13 +112,12 @@ def main(args) -> None:
     # Print trainable parameters
     print(f"Trainable parameters: {model.num_parameters()}")
 
-    # # Resize model embeddings to accommodate new tokens
-    # model.resize_token_embeddings(len(tokenizer))
-    # print(f"Resized model embeddings to {len(tokenizer)} tokens.")
+    # Resize model embeddings to accommodate new tokens
+    model.resize_token_embeddings(len(tokenizer))
+    print(f"Resized model embeddings to {len(tokenizer)} tokens.")
 
     model.to(device)
 
-    # TODO what is this exactly doing?
     # Ensure the tokenizer uses the special tokens
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token_id
@@ -126,15 +126,21 @@ def main(args) -> None:
     # 4. Load Data
     # ------------------------------
 
-    # Load the datasets from disk
-    print("Getting data...")
-    # TODO - This is hardcoded to the bookshop dataset, make it more flexible
-    dataset = load_from_disk("data/processed/unsupervised/bookshop/bookshop_subset_contextlength_512")
-    # TODO - Find proper way to split this in the future
-    # split into train and test
-    dataset=dataset.train_test_split(test_size=0.05, seed=42)
-    train_dataset = dataset["train"]
-    validation_dataset = dataset["test"]
+    # # Load the datasets from disk
+    # print("Getting data...")
+    # # TODO - This is hardcoded to the bookshop dataset, make it more flexible
+    # dataset = load_from_disk("data/processed/unsupervised/bookshop/bookshop_subset_contextlength_512")
+    # # TODO - Find proper way to split this in the future
+    # # split into train and test
+    # dataset=dataset.train_test_split(test_size=0.05, seed=42)
+    # train_dataset = dataset["train"]
+    # validation_dataset = dataset["test"]
+
+    #  TODO - This is hardcoded to the bookshop dataset, make it more flexible
+    train_dataset = load_from_disk("data/processed/unsupervised/combined/combined_contextlength_512_train")
+    validation_dataset = load_from_disk("data/processed/unsupervised/combined/combined_contextlength_512_val")
+
+    #train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)
@@ -153,10 +159,10 @@ def main(args) -> None:
         batched=True,
         remove_columns=small_train_dataset.column_names)
     
-    #print(f"Before filtering, {len(tokenized_train_dataset)} examples remain.")
+    print(f"Before filtering, {len(tokenized_train_dataset)} examples remain.")
 
-    #tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)  # Filter out examples where labels are all -100
-    #print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
+    tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)  # Filter out examples where labels are all -100
+    print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
 
     # Preprocess the validation dataset
     print("\nPreprocessing the validation dataset...")
@@ -166,8 +172,8 @@ def main(args) -> None:
         remove_columns=validation_dataset.column_names
     )
 
-    #tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
-    #print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
+    tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
+    print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
 
     # ------------------------------
     # 6. Create DataLoaders

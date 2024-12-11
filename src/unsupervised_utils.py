@@ -25,28 +25,44 @@ def unsupervised_preprocess_function(
     """
     inputs = []
     labels = []
-    #assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
-    #missing_assistant_token = 0
+    assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
+    missing_assistant_token = 0
 
-    for input in examples["text"]:
-        # add the end of turn token
-        # TODO Is this the correct way to do for unsupervised data?
-        # we need some kind of end of turn token, but if it should be this one I am not sure
-        input = f"{input}<|end_of_turn|>"
+    for text in examples["text"]:  
 
+    # for instruction, input_text, output_text in zip(
+    #     examples.get("instructions", [""] * len(examples["inputs"])),
+    #     examples["inputs"],
+    #     examples["outputs"],
+    # ):
+        # Construct the prompt
+        #user_prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|>"
+        #assistant_prompt = f"<|assistant|>{output_text}<|end_of_turn|>"
+        prompt = f"<|assistant|>{text}<|end_of_turn|>"
+
+        # Tokenize the prompt
         tokenized = tokenizer(
-            input,
+            prompt,
             truncation=True,
             max_length=max_length,
-            padding=False, #TODO - This is set to false, but should it be true?
+            padding=False,
             return_attention_mask=True,
         )
         input_ids = tokenized["input_ids"]
         attention_mask = tokenized["attention_mask"]
-        # labels is just the input_ids
-        labels_ids = copy(input_ids)
-        # make the last label -100 since it is the end of the turn token
-        labels_ids[-1] = -100
+
+        # Initialize labels with -100 to ignore in loss computation
+        labels_ids = [-100] * len(input_ids)
+
+        # Find the position of the assistant token
+        try:
+            assistant_token_position = input_ids.index(assistant_token_id)
+            # Set labels for the assistant's response
+            labels_ids[assistant_token_position + 1:] = input_ids[assistant_token_position + 1:]
+        except ValueError:
+            # Assistant token not found
+            missing_assistant_token += 1
+            # All labels remain -100, meaning this example will be ignored in loss computation
 
         inputs.append(
             {
@@ -54,7 +70,13 @@ def unsupervised_preprocess_function(
                 "attention_mask": attention_mask,
             }
         )
-        labels.append(labels_ids)   
+        labels.append(labels_ids)
+
+    # Log the number of examples where the assistant token was not found
+    if missing_assistant_token > 0:
+        logger.warning(
+            f"Number of examples where assistant token was not found: {missing_assistant_token}"
+        )
 
     return {
         "input_ids": [x["input_ids"] for x in inputs],
