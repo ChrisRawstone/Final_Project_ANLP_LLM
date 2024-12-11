@@ -207,17 +207,21 @@ def main(args) -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Initialize the learning rate scheduler
-    if lr_scheduler: 
+    if lr_scheduler == 'linear': 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
+            num_warmup_steps=350, #hardcoded to approx match the instruct tuning one
             num_training_steps=total_steps
         )
-    else: 
+    elif lr_scheduler == 'constant': 
         scheduler = get_constant_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=total_steps // 10  # 10% of total steps for warm-up
+            num_warmup_steps=350 #hardcoded to approx match the instruct tuning one
         )
+    elif lr_scheduler == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    else:
+        raise ValueError(f"Invalid lr_scheduler: {lr_scheduler}")
 
     # Initialize GradScaler if using mixed precision
     scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
@@ -248,14 +252,16 @@ def main(args) -> None:
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        output_dir=output_dir
+        output_dir=output_dir,
+        save_steps=500,
     )
 
     print("\nTraining script completed.")
 
     wandb.finish() # Finish the wandb run
 
-    evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/unsupervised/{timestamp}")
+    #do this manually for now
+    #evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/unsupervised/{timestamp}")
 
 if __name__ == "__main__":
     args = get_args()
