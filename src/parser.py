@@ -17,4 +17,5 @@ def get_args():
     parser.add_argument("--data_skolegpt", type=bool, default=True, help="Use data_skolegpt dataset")
     parser.add_argument("--data_aya", type=bool, default=True, help="Use data_aya dataset")
     parser.add_argument("--shuffle", type=bool, default=True, help="Use data shuffle")
+    parser.add_argument("--LoRA", type=bool, default=False, help="Use LoRA")
     return parser.parse_args()

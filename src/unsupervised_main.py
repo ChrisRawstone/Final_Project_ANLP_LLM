@@ -14,6 +14,7 @@ from transformers import (
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 )
+from peft import LoraConfig, get_peft_model
 from datasets import load_from_disk
 import wandb
 wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
@@ -42,6 +43,7 @@ def main(args) -> None:
     max_grad_norm = args.max_grad_norm
     num_workers = args.num_workers
     seed = args.seed
+    LoRA = args.LoRA
 
     # ------------------------------
     # 2. Set Up Experiment
@@ -68,6 +70,7 @@ def main(args) -> None:
         f.write(f"max_grad_norm: {max_grad_norm}\n")
         f.write(f"num_workers: {num_workers}\n")
         f.write(f"seed: {seed}\n")
+        f.write(f"LoRA: {LoRA}\n")
 
     # Check for GPU availability
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -109,12 +112,29 @@ def main(args) -> None:
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    # Print trainable parameters
-    print(f"Trainable parameters: {model.num_parameters()}")
-
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))
     print(f"Resized model embeddings to {len(tokenizer)} tokens.")
+
+    # Print trainable parameters
+    print(f"Trainable parameters: {model.num_parameters()}")
+
+    if LoRA:
+        # Define LoRA configuration
+        lora_config = LoraConfig(
+            r=8,  # Low-rank adaptation dimension
+            lora_alpha=16,  # Scaling factor
+            target_modules=["q_proj", "v_proj"],  # Target attention layers
+            lora_dropout=0.005,  # Dropout for LoRA layers
+            bias="none",  # Options: "none", "all", "lora_only"
+            task_type="CAUSAL_LM"  # Task type: Causal Language Modeling
+        )
+
+        # Apply LoRA to the model
+        model = get_peft_model(model, lora_config)
+        # Print total trainable parameters after applying LoRA
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Trainable parameters after LoRA: {trainable_params}")
 
     model.to(device)
 
@@ -261,7 +281,7 @@ def main(args) -> None:
     wandb.finish() # Finish the wandb run
 
     #do this manually for now
-    #evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/unsupervised/{timestamp}")
+    evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/unsupervised/{timestamp}")
 
 if __name__ == "__main__":
     args = get_args()
