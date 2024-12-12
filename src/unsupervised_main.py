@@ -273,7 +273,7 @@ def main(args) -> None:
         fp16=fp16,
         max_grad_norm=max_grad_norm,
         output_dir=output_dir,
-        save_steps=500,
+        save_steps=125,
     )
 
     print("\nTraining script completed.")

@@ -15,6 +15,6 @@
 
 module load cuda/11.8
 
-source venv_poetry/bin/activate
+source venv/bin/activate
 
 python src/evaluation.py
