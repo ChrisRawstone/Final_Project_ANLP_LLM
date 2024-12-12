@@ -40,7 +40,11 @@ def main(args) -> None:
     max_grad_norm = args.max_grad_norm
     num_workers = args.num_workers
     seed = args.seed
-
+    data_openhermes = args.data_openhermes
+    data_skolegpt = args.data_skolegpt
+    data_aya = args.data_aya
+    shuffle = args.shuffle
+    
     # ------------------------------
     # 2. Set Up Experiment
     # ------------------------------
@@ -126,7 +130,7 @@ def main(args) -> None:
 
     # Load the datasets from disk
     print("Getting data...")
-    train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
+    train_dataset, validation_dataset = make_instruction_data(data_openhermes=data_openhermes, data_skolegpt=data_skolegpt, data_aya=data_aya, shuffle=shuffle)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)
@@ -193,17 +197,21 @@ def main(args) -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # Initialize the learning rate scheduler
-    if lr_scheduler: 
+    if lr_scheduler == 'linear': 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
             num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
             num_training_steps=total_steps
         )
-    else: 
+    elif lr_scheduler == 'constant': 
         scheduler = get_constant_schedule_with_warmup(
             optimizer,
             num_warmup_steps=total_steps // 10  # 10% of total steps for warm-up
         )
+    elif lr_scheduler == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    else:
+        raise ValueError(f"Invalid lr_scheduler: {lr_scheduler}")
 
     # Initialize GradScaler if using mixed precision
     scaler = torch.cuda.amp.GradScaler(enabled=fp16) if fp16 else None
