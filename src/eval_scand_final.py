@@ -1,11 +1,3 @@
-"""
-evaluation_final_model_modified.py
-
-Evaluates only the 'final_model' in the specified folder on the ScandiQA-DA and ScaLA-Da datasets.
-Saves the results to a CSV file named 'final_benchmark.csv'.
-Implements error handling to ensure smooth execution and accommodates different evaluation metrics for each dataset.
-"""
-
 import os
 import pandas as pd
 from scandeval import Benchmarker
@@ -14,6 +6,7 @@ from scandeval import Benchmarker
 DATASET_METRICS = {
     "scandiqa-da": ["test_em", "test_f1", "test_em_se", "test_f1_se"],
     "scala-da": ["test_mcc", "test_macro_f1", "test_mcc_se", "test_macro_f1_se"],
+    "nordjylland-news": ["test_bertscore", "test_rouge_l", "test_bertscore_se", "test_rouge_l_se"]
 }
 
 def get_final_model_path(model_dir):
@@ -35,22 +28,18 @@ def ensure_directory(dir_path):
 def evaluate_final_model(
     MODEL_DIR,
     RESULT_DIR,
-    CSV_FILENAME="final_benchmark.csv",
-    DATASETS=["scandiqa-da", "ScaLA-Da"],
+    DATASETS=["scandiqa-da", "scala-da", "nordjylland-news"],
     LANGUAGE="da",
     FRAMEWORK="pytorch",
     DEVICE="cuda",
     NUM_ITERATIONS=10
 ):
     """
-    Evaluates the 'final_model' on specified datasets and saves the results to a CSV file.
+    Evaluates the 'final_model' on specified datasets and saves the results to individual CSV files named after each benchmark.
     Accommodates different evaluation metrics based on the dataset.
     """
     # Ensure result directory exists
     ensure_directory(RESULT_DIR)
-
-    # Define path for CSV
-    csv_path = os.path.join(RESULT_DIR, CSV_FILENAME)
 
     try:
         # Get the final model path
@@ -69,9 +58,6 @@ def evaluate_final_model(
             force=True
         )
 
-        # List to hold all results
-        all_results = []
-
         for dataset in DATASETS:
             print(f"--- Benchmarking on dataset: {dataset} ---\n")
             try:
@@ -84,6 +70,11 @@ def evaluate_final_model(
                     trust_remote_code=True,
                     verbose=True,
                 )
+                print(f"Type of results for dataset '{dataset}': {type(results)}")
+                if isinstance(results, list):
+                    print(f"Number of results returned: {len(results)}")
+                else:
+                    print(f"Results content: {results}")
 
                 # Initialize variables
                 extracted_metrics = {metric: None for metric in DATASET_METRICS.get(dataset, [])}
@@ -123,40 +114,63 @@ def evaluate_final_model(
                 }
                 result_entry.update(extracted_metrics)
 
-                # Append the results
-                all_results.append(result_entry)
+                # Create a DataFrame for the current dataset
+                df_dataset = pd.DataFrame([result_entry])
+
+                # Ensure all possible metric columns are present in the DataFrame
+                all_possible_metrics = DATASET_METRICS.get(dataset, [])
+                for metric in all_possible_metrics:
+                    if metric not in df_dataset.columns:
+                        df_dataset[metric] = None  # Fill missing metrics with None
+
+                # Reorder columns: model, dataset, then sorted metrics
+                sorted_metrics = sorted(all_possible_metrics)
+                df_dataset = df_dataset[["model", "dataset"] + sorted_metrics]
+
+                # Define CSV filename based on the dataset name
+                csv_filename = f"{dataset}.csv"
+                csv_path = os.path.join(RESULT_DIR, csv_filename)
+
+                # Save the dataset-specific results to CSV
+                if os.path.exists(csv_path):
+                    # If the CSV already exists, append the new results
+                    df_existing = pd.read_csv(csv_path)
+                    df_combined = pd.concat([df_existing, df_dataset], ignore_index=True)
+                    df_combined.to_csv(csv_path, index=False, float_format='%.8f')
+                else:
+                    # If the CSV doesn't exist, create it
+                    df_dataset.to_csv(csv_path, index=False, float_format='%.8f')
+
+                print(f"Evaluation results for dataset '{dataset}' saved to {csv_path}\n")
 
             except Exception as e:
                 print(f"Error benchmarking model {model_name} on dataset {dataset}: {e}\n")
-                # Append a result with None values to indicate failure
+                # Prepare a failed entry with None values for metrics
                 failed_entry = {
                     "model": model_name,
                     "dataset": dataset
                 }
-                # Set all metrics for this dataset to None
                 for metric in DATASET_METRICS.get(dataset, []):
                     failed_entry[metric] = None
-                all_results.append(failed_entry)
 
-        # Create DataFrame with all results
-        df_final = pd.DataFrame(all_results)
+                # Create a DataFrame for the failed entry
+                df_failed = pd.DataFrame([failed_entry])
 
-        # Ensure all possible metric columns are present in the DataFrame
-        # This is useful if different datasets have different metrics
-        all_possible_metrics = set()
-        for metrics in DATASET_METRICS.values():
-            all_possible_metrics.update(metrics)
-        for metric in all_possible_metrics:
-            if metric not in df_final.columns:
-                df_final[metric] = None  # Fill missing metrics with None
+                # Define CSV filename based on the dataset name
+                csv_filename = f"{dataset}.csv"
+                csv_path = os.path.join(RESULT_DIR, csv_filename)
 
-        # Reorder columns: model, dataset, then sorted metrics
-        sorted_metrics = sorted(all_possible_metrics)
-        df_final = df_final[["model", "dataset"] + sorted_metrics]
+                # Save the failed result to CSV
+                if os.path.exists(csv_path):
+                    # If the CSV already exists, append the failed result
+                    df_existing = pd.read_csv(csv_path)
+                    df_combined = pd.concat([df_existing, df_failed], ignore_index=True)
+                    df_combined.to_csv(csv_path, index=False, float_format='%.8f')
+                else:
+                    # If the CSV doesn't exist, create it
+                    df_failed.to_csv(csv_path, index=False, float_format='%.8f')
 
-        # Save the results to CSV
-        df_final.to_csv(csv_path, index=False, float_format='%.8f')
-        print(f"All evaluation results saved to {csv_path}")
+                print(f"Failed evaluation for dataset '{dataset}' recorded in {csv_path}\n")
 
     except FileNotFoundError as fnf_error:
         print(fnf_error)
@@ -172,10 +186,9 @@ if __name__ == "__main__":
     evaluate_final_model(
         MODEL_DIR=MODEL_DIR,
         RESULT_DIR=RESULT_DIR,
-        CSV_FILENAME="final_benchmark.csv",
-        DATASETS=["scandiqa-da", "scala-da"],  # Ensure dataset names match exactly
+        DATASETS=["nordjylland-news", "scandiqa-da", "scala-da"],
         LANGUAGE="da",
         FRAMEWORK="pytorch",
         DEVICE="cuda",
-        NUM_ITERATIONS=10
+        NUM_ITERATIONS=1
     )
