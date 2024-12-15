@@ -6,9 +6,9 @@ def process_text_file(file_path):
     """Process a large text file in chunks to minimize memory usage"""
     print(f"\nProcessing: {file_path}")
     
-    total_chars = 0
+    total_tokens = 0
     total_lines = 0
-    line_lengths = []
+    tokens_per_line = []
     chunk_size = 100000
     
     # Try different encodings
@@ -35,10 +35,12 @@ def process_text_file(file_path):
                     
                 # Process chunk
                 for line in chunk:
-                    line_len = len(line)
-                    total_chars += line_len
+                    # Split line into tokens (simple whitespace tokenization)
+                    tokens = line.split()
+                    num_tokens = len(tokens)
+                    total_tokens += num_tokens
                     total_lines += 1
-                    line_lengths.append(line_len)
+                    tokens_per_line.append(num_tokens)
                 
                 # Print progress for large files
                 if total_lines % 1000000 == 0:
@@ -49,24 +51,24 @@ def process_text_file(file_path):
         return None
         
     # Calculate statistics using numpy for efficiency
-    line_lengths = np.array(line_lengths)
+    tokens_per_line = np.array(tokens_per_line)
     stats = {
         'file_name': file_path.name,
-        'total_characters': total_chars,
+        'total_tokens': total_tokens,
         'total_lines': total_lines,
         'num_sentences': total_lines,
-        'avg_sentence_length': np.mean(line_lengths),
-        'max_sentence_length': np.max(line_lengths),
-        'min_sentence_length': np.min(line_lengths)
+        'avg_tokens_per_sentence': np.mean(tokens_per_line),
+        'max_tokens_per_sentence': np.max(tokens_per_line),
+        'min_tokens_per_sentence': np.min(tokens_per_line)
     }
     
     # Print summary
     print("\nFile Processing Complete!")
-    print(f"Total characters: {stats['total_characters']:,}")
+    print(f"Total tokens: {stats['total_tokens']:,}")
     print(f"Total lines: {stats['total_lines']:,}")
-    print(f"Average line length: {stats['avg_sentence_length']:.2f} characters")
-    print(f"Longest line: {stats['max_sentence_length']} characters")
-    print(f"Shortest line: {stats['min_sentence_length']} characters")
+    print(f"Average tokens per line: {stats['avg_tokens_per_sentence']:.2f}")
+    print(f"Most tokens in a line: {stats['max_tokens_per_sentence']}")
+    print(f"Fewest tokens in a line: {stats['min_tokens_per_sentence']}")
     
     return pd.DataFrame([stats])
 

@@ -1,13 +1,16 @@
 # my changes:
 
-# Ignore everything in the data directory
+# Ignore everything in the data and models_final directory
 /data
+/models_final
+
 logs
 
 *qwen2.5*
 models
 *danish-pytorch-test*
 wandb
+
 
 .scandeval_cache
 ScandEval
@@ -18,6 +21,7 @@ docs/site/
 
 # test cache
 manual_test/
+
 
 # other local dev info
 .vscode/

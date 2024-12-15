@@ -6,6 +6,7 @@ Main script to train a causal language model on Danish question-answering data.
 # ------------------------------
 import os
 from datetime import datetime
+import logging
 
 import torch
 from transformers import (
@@ -27,6 +28,13 @@ from evaluation import evaluate_scandeval
 from data.make_dataset import make_instruction_data
 from parser import get_args
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
 def main(args) -> None:
     model_name = "Qwen/Qwen2.5-0.5B"
     batch_size = args.batch_size
@@ -40,7 +48,11 @@ def main(args) -> None:
     max_grad_norm = args.max_grad_norm
     num_workers = args.num_workers
     seed = args.seed
-
+    data_openhermes = args.data_openhermes
+    data_skolegpt = args.data_skolegpt
+    data_aya = args.data_aya
+    shuffle = args.shuffle
+    
     # ------------------------------
     # 2. Set Up Experiment
     # ------------------------------
@@ -72,7 +84,7 @@ def main(args) -> None:
     print(f"Using device: {device}")
 
     # Initialize wandb
-    wandb.init(
+    """wandb.init(
         project="danish-qa-model",
         name=f"instruction-{timestamp}",
         config={
@@ -90,7 +102,7 @@ def main(args) -> None:
             "seed": seed,
             "output_dir": output_dir,
         },
-        reinit=True)
+        reinit=True)"""
 
     # ------------------------------
     # 3. Load Tokenizer and Model
@@ -126,7 +138,7 @@ def main(args) -> None:
 
     # Load the datasets from disk
     print("Getting data...")
-    train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
+    train_dataset, validation_dataset = make_instruction_data(data_openhermes=data_openhermes, data_skolegpt=data_skolegpt, data_aya=data_aya, shuffle=shuffle)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)
@@ -140,26 +152,133 @@ def main(args) -> None:
     # 5. Apply Preprocessing
     # ------------------------------
     print("\nPreprocessing the training dataset...")
-    tokenized_train_dataset = small_train_dataset.map(
-        lambda examples: preprocess_function(examples, tokenizer, max_length),
-        batched=True,
-        remove_columns=small_train_dataset.column_names)
+    total_train_user_tokens = 0
+    total_train_assistant_tokens = 0
     
-    print(f"Before filtering, {len(tokenized_train_dataset)} examples remain.")
+    def accumulate_tokens(examples):
+        result = preprocess_function(examples, tokenizer, max_length)
+        nonlocal total_train_user_tokens, total_train_assistant_tokens
+        total_train_user_tokens += result['batch_user_tokens'][0]  # Extract from list
+        total_train_assistant_tokens += result['batch_assistant_tokens'][0]  # Extract from list
+        return result
 
-    tokenized_train_dataset = tokenized_train_dataset.filter(filter_empty_labels)  # Filter out examples where labels are all -100
-    print(f"After filtering, {len(tokenized_train_dataset)} examples remain.")
+    tokenized_train_dataset = small_train_dataset.map(
+        accumulate_tokens,
+        batched=True,
+        remove_columns=small_train_dataset.column_names,
+        keep_in_memory=True)
+    
+    print("\nTraining Dataset Token Counts (excluding special tokens):")
+    print(f"Total user tokens: {total_train_user_tokens}")
+    print(f"Total assistant tokens: {total_train_assistant_tokens}")
+    print(f"Total combined tokens: {total_train_user_tokens + total_train_assistant_tokens}")
 
     # Preprocess the validation dataset
     print("\nPreprocessing the validation dataset...")
-    tokenized_val_dataset = validation_dataset.map(
-        lambda examples: preprocess_function(examples, tokenizer, max_length),
-        batched=True,
-        remove_columns=validation_dataset.column_names
-    )
+    total_val_user_tokens = 0
+    total_val_assistant_tokens = 0
+    
+    def accumulate_val_tokens(examples):
+        result = preprocess_function(examples, tokenizer, max_length)
+        nonlocal total_val_user_tokens, total_val_assistant_tokens
+        total_val_user_tokens += result['batch_user_tokens'][0]  # Extract from list
+        total_val_assistant_tokens += result['batch_assistant_tokens'][0]  # Extract from list
+        return result
 
-    tokenized_val_dataset = tokenized_val_dataset.filter(filter_empty_labels)
-    print(f"After filtering, {len(tokenized_val_dataset)} validation examples remain.")
+    tokenized_val_dataset = validation_dataset.map(
+        accumulate_val_tokens,
+        batched=True,
+        remove_columns=validation_dataset.column_names,
+        keep_in_memory=True)
+    
+    print("\nValidation Dataset Token Counts (excluding special tokens):")
+    print(f"Total user tokens: {total_val_user_tokens}")
+    print(f"Total assistant tokens: {total_val_assistant_tokens}")
+    print(f"Total combined tokens: {total_val_user_tokens + total_val_assistant_tokens}")
+
+    # Print example structure and token counts
+    print("\nInspecting first example in tokenized dataset:")
+    first_example = tokenized_train_dataset[0]
+    
+    # Initialize counters for total tokens and characters in training dataset
+    total_instruction_tokens = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_instruction_chars = 0
+    total_input_chars = 0
+    total_output_chars = 0
+    
+    # Count tokens and characters for training dataset
+    for example in small_train_dataset:
+        # Use standardized field names
+        instruction = str(example.get('instructions', '') or '')
+        input_text = str(example.get('inputs', '') or '')
+        output_text = str(example.get('outputs', '') or '')
+        
+        # Count tokens and characters
+        instruction_tokens = len(tokenizer.encode(instruction))
+        input_tokens = len(tokenizer.encode(input_text))
+        output_tokens = len(tokenizer.encode(output_text))
+        
+        total_instruction_tokens += instruction_tokens
+        total_input_tokens += input_tokens
+        total_output_tokens += output_tokens
+        
+        total_instruction_chars += len(instruction)
+        total_input_chars += len(input_text)
+        total_output_chars += len(output_text)
+    
+    # Print token counts for training dataset
+    print(f"\nTraining Dataset Token Counts:")
+    print(f"Total instruction tokens: {total_instruction_tokens}")
+    print(f"Total input tokens: {total_input_tokens}")
+    print(f"Total output tokens: {total_output_tokens}")
+    print(f"Total combined tokens: {total_instruction_tokens + total_input_tokens + total_output_tokens}")
+    
+    # Print character counts for training dataset
+    print(f"\nTraining Dataset Character Counts:")
+    print(f"Total combined characters: {total_instruction_chars + total_input_chars + total_output_chars}")
+    
+
+    
+    # Initialize counters for total tokens and characters in validation dataset
+    total_val_instruction_tokens = 0
+    total_val_input_tokens = 0
+    total_val_output_tokens = 0
+    total_val_instruction_chars = 0
+    total_val_input_chars = 0
+    total_val_output_chars = 0
+    
+    # Count tokens and characters for validation dataset
+    for example in validation_dataset:
+        instruction = example.get('instructions', '') or ''
+        input_text = example.get('inputs', '') or ''
+        output_text = example.get('outputs', '') or ''
+        
+        # Count tokens
+        instruction_tokens = len(tokenizer.encode(instruction))
+        input_tokens = len(tokenizer.encode(input_text))
+        output_tokens = len(tokenizer.encode(output_text))
+        
+        total_val_instruction_tokens += instruction_tokens
+        total_val_input_tokens += input_tokens
+        total_val_output_tokens += output_tokens
+        
+        # Count characters
+        total_val_instruction_chars += len(instruction)
+        total_val_input_chars += len(input_text)
+        total_val_output_chars += len(output_text)
+    
+    # Print token counts for validation dataset
+    print(f"\nValidation Dataset Token Counts:")
+    print(f"Total instruction tokens: {total_val_instruction_tokens}")
+    print(f"Total input tokens: {total_val_input_tokens}")
+    print(f"Total output tokens: {total_val_output_tokens}")
+    print(f"Total combined tokens: {total_val_instruction_tokens + total_val_input_tokens + total_val_output_tokens}")
+    
+    # Print character counts for validation dataset
+    print(f"\nValidation Dataset Character Counts:")
+    print(f"Total combined characters: {total_val_instruction_chars + total_val_input_chars + total_val_output_chars}")
 
     # ------------------------------
     # 6. Create DataLoaders
@@ -220,7 +339,7 @@ def main(args) -> None:
     # ------------------------------
     # 9. Run the Training
     # ------------------------------
-    run_training_steps(
+    """ run_training_steps(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,  
@@ -235,7 +354,7 @@ def main(args) -> None:
         fp16=fp16,
         max_grad_norm=max_grad_norm,
         output_dir=output_dir
-    )
+    )"""
 
     print("\nTraining script completed.")
 
