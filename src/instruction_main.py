@@ -28,7 +28,7 @@ from data.make_dataset import make_instruction_data
 from parser import get_args
 
 def main(args) -> None:
-    model_name = "Qwen/Qwen2.5-0.5B"
+    model_name = args.model_name
     batch_size = args.batch_size
     num_epochs = args.num_epochs
     learning_rate = args.learning_rate
@@ -101,7 +101,7 @@ def main(args) -> None:
     # ------------------------------
 
     # Load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
 
     # Add special tokens
     special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
@@ -249,7 +249,7 @@ def main(args) -> None:
 
     wandb.finish() # Finish the wandb run
 
-    evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/instruction/{timestamp}")
+    #evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/instruction/{timestamp}")
 
 if __name__ == "__main__":
     args = get_args()

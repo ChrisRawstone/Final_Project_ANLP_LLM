@@ -2,6 +2,7 @@ import argparse
 def get_args():
     parser = argparse.ArgumentParser(description="Training Configuration")
     # Add arguments with default values
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-0.5B", help="Path to the model")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size for training")
     parser.add_argument("--num_epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--learning_rate", type=float, default=5e-5, help="Learning rate")
