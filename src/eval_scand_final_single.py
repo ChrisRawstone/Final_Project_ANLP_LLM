@@ -33,7 +33,8 @@ def evaluate_final_model(
     LANGUAGE="da",
     FRAMEWORK="pytorch",
     DEVICE="cuda",
-    NUM_ITERATIONS=10
+    NUM_ITERATIONS=10,
+    DEBUG=False,
 ):
     """
     Evaluates the 'final_model' on specified datasets and saves the results to individual CSV files named after each benchmark.
@@ -70,7 +71,7 @@ def evaluate_final_model(
                 verbose=True,
                 num_iterations=NUM_ITERATIONS,
                 force=True,
-                debug=False # if this is true it seems the outputs are saved to file
+                debug=DEBUG # if this is true it seems the outputs are saved to file
             )
             
 
@@ -230,7 +231,8 @@ if __name__ == "__main__":
 
     # Define model names to evaluate
     args = get_args_eval()
-    config_num = args.config_num
+    #config_num = args.config_num
+    config_num = 19
 
     if config_num in [10, 20, 30]:
         # exit since we havnt trained the model5 with pretrain yet
@@ -250,7 +252,8 @@ if __name__ == "__main__":
         LANGUAGE="da",
         FRAMEWORK="pytorch",
         DEVICE="cuda",
-        NUM_ITERATIONS=10)
+        NUM_ITERATIONS=1,
+        DEBUG=True)
 
     
     

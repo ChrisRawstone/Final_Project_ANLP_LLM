@@ -20,3 +20,11 @@ def get_args():
     parser.add_argument("--shuffle", type=bool, default=True, help="Use data shuffle")
     parser.add_argument("--LoRA", type=bool, default=False, help="Use LoRA")
     return parser.parse_args()
+
+def get_args_eval():
+    parser = argparse.ArgumentParser(description="Eval Configuration")
+    # Add arguments with default values
+    parser.add_argument("--config_num", type=int, default=1, help="conf to use")
+    return parser.parse_args()
+
+#["nordjylland-news", "scandiqa-da", "scala-da"]
