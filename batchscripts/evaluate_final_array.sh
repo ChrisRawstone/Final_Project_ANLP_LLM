@@ -1,5 +1,5 @@
 #!/bin/sh
-#BSUB -J Evaluate1[2-30:2]
+#BSUB -J Evaluate[4,9,14,19]
 #BSUB -o logs/Eval%J_%I.out
 #BSUB -e logs/Eval%J_%I.err
 #BSUB -q gpuv100
@@ -7,7 +7,7 @@
 #BSUB -n 16
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=5G]"
-#BSUB -W 1:15
+#BSUB -W 1:25
 #BSUB -N
 
 #BSUB 
@@ -17,6 +17,7 @@ module load cuda/11.8
 
 source venv/bin/activate
 
-python src/eval_scand_final.py --config_num $LSB_JOBINDEX
+#python src/eval_scand_final.py --config_num $LSB_JOBINDEX
+python src/eval_scand_final_single.py --config_num $LSB_JOBINDEX
 
 #["nordjylland-news", "scandiqa-da", "scala-da"]

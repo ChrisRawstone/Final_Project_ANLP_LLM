@@ -233,9 +233,9 @@ config_map = {
 if __name__ == "__main__":   
     # choose config number:     
     # Define model names to evaluate
-    #args = get_args_eval()
-    #config_num = args.config_num
-    config_num = 10   
+    args = get_args_eval()
+    config_num = args.config_num
+    #config_num = 4
     
     model_name = config_map[config_num]["model"]
     dataset = config_map[config_num]["dataset"]
@@ -270,7 +270,7 @@ if __name__ == "__main__":
         LANGUAGE="da",
         FRAMEWORK="pytorch",
         DEVICE="cuda",
-        NUM_ITERATIONS=1, # maybe consider changing module source code since this is long prompt
+        NUM_ITERATIONS=10, # maybe consider changing module source code since this is long prompt
         DEBUG=True)
 
     
