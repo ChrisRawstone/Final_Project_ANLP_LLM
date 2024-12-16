@@ -2,6 +2,7 @@ import os
 import pandas as pd
 from scandeval import Benchmarker
 from parser import get_args_eval
+import logging
 
 # Define a mapping from dataset names to their respective metrics
 DATASET_METRICS = {
@@ -227,23 +228,40 @@ config_map = {
 30: {"dataset": "scala-da", "model": "model5_with_pretrain"},
 }
 
+
+
 if __name__ == "__main__":   
-
+    # choose config number:     
     # Define model names to evaluate
-    args = get_args_eval()
+    #args = get_args_eval()
     #config_num = args.config_num
-    config_num = 19
-
-    if config_num in [10, 20, 30]:
-        # exit since we havnt trained the model5 with pretrain yet
-        print("Model5 with pretrain has not been trained yet.")
-        exit()
+    config_num = 10   
     
     model_name = config_map[config_num]["model"]
     dataset = config_map[config_num]["dataset"]
     
     MODEL_DIR = f"models_final/Instruction/{model_name}"
     RESULT_DIR = f"result/instruction/{model_name}/{dataset}"
+
+    #MODEL_DIR = "models_final/Instruction/unsup_and_instruct_2/"
+    #RESULT_DIR = "result/instruction/unsup_and_instruct_2/"
+
+    # make the RESULT_DIR if it does not exist
+    if not os.path.exists(RESULT_DIR):
+        os.makedirs(RESULT_DIR)  
+
+    # Access the logger created by the package
+    logger = logging.getLogger("scandeval")
+    # create file for logging
+    
+
+    # Create a custom handler to log to a file
+    file_handler = logging.FileHandler(os.path.join(RESULT_DIR, "output.log")
+    , mode='a')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s ⋅ %(message)s'))
+
+    # Add the handler to the logger
+    logger.addHandler(file_handler)
     
     evaluate_final_model(
         MODEL_DIR=MODEL_DIR,
@@ -252,7 +270,7 @@ if __name__ == "__main__":
         LANGUAGE="da",
         FRAMEWORK="pytorch",
         DEVICE="cuda",
-        NUM_ITERATIONS=1,
+        NUM_ITERATIONS=1, # maybe consider changing module source code since this is long prompt
         DEBUG=True)
 
     

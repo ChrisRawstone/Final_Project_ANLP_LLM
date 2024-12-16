@@ -230,12 +230,7 @@ if __name__ == "__main__":
 
     # Define model names to evaluate
     args = get_args_eval()
-    config_num = args.config_num
-
-    if config_num in [10, 20, 30]:
-        # exit since we havnt trained the model5 with pretrain yet
-        print("Model5 with pretrain has not been trained yet.")
-        exit()
+    config_num = args.config_num   
     
     model_name = config_map[config_num]["model"]
     dataset = config_map[config_num]["dataset"]
