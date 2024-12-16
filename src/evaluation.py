@@ -204,7 +204,8 @@ def evaluate_scandeval(MODEL_DIR, RESULT_DIR, CSV_FILENAME = "evaluation_results
                 device=DEVICE,
                 verbose=True,
                 num_iterations=NUM_ITERATIONS,
-                force=True
+                force=True,
+                few_shot=False
             )
 
             # Run the benchmark and capture the results
@@ -215,6 +216,8 @@ def evaluate_scandeval(MODEL_DIR, RESULT_DIR, CSV_FILENAME = "evaluation_results
                 framework=FRAMEWORK,
                 trust_remote_code=True,
                 verbose=True,
+
+
             )
 
             # Debugging: Print the type and contents of results
@@ -297,8 +300,9 @@ if __name__ == "__main__":
     # Constants
     timestamp = "20241202200154"
 
-    MODEL_DIR = f"models/instruction/{timestamp}"
-    RESULT_DIR = f"result/instruction/{timestamp}"
+    #MODEL_DIR = f"models/instruction/{timestamp}"
+    #RESULT_DIR = f"result/instruction/{timestamp}"
     
-    
+    MODEL_DIR = "models_final/instruction_final"
+    RESULT_DIR = "result/instruction/final"
     evaluate_scandeval(MODEL_DIR, RESULT_DIR)

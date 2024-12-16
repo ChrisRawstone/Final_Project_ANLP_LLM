@@ -4,10 +4,12 @@
 /data
 logs
 
+models_final
 *qwen2.5*
 models
 *danish-pytorch-test*
 wandb
+result
 
 .scandeval_cache
 ScandEval
