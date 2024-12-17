@@ -70,4 +70,15 @@ python src/evaluation.py --model_dir models_final/Instruction/best_model_pretrai
 ```
 
 
+### Producing plots:
+
+#### EM and F1 on ScandiQA across Training Steps
+```
+python src/plot_scandiqa_timeline_evaluation.py --plot_path result/instruction/final_plots/scandiqa_plot_model5.png --csv_path models_final/Instruction/best_model_instruct_christian/20241211094520/evaluation_scandiqa_results.csv
+```
+
+
+
+
+
 
