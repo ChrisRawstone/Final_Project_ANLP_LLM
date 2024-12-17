@@ -1,8 +1,8 @@
 #!/bin/sh
-#BSUB -J Evaluate[4,9,14,19]
+#BSUB -J Evaluate[14,19]
 #BSUB -o logs/Eval%J_%I.out
 #BSUB -e logs/Eval%J_%I.err
-#BSUB -q gpuv100
+#BSUB -q gpua100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -n 16
 #BSUB -R "span[hosts=1]"
