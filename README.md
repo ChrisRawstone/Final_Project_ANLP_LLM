@@ -15,16 +15,21 @@ Less video memory on GPU has not been tested.
 ### Unsupervised data:
 For unsupervised data we used 13B Token dataset provided by our Professor, Rob van der Goot.
 
-Put the data in data folder and (bla bla bla) and run the following preprocessing commands:
+Put the data in data/raw/unsupervised folder and run the following preprocessing commands to cut the data into smaller chunks:
 ```
-(Placeholder)
+python src/data/unsupervised_data_cut.py
 ```
 
+Then run the following command to create the dataset in arrow and json format:
+
+```
+python src/data/make_unsupervised_dataset.py OBS CHECK HER CHRIS
+```
 
 ### Instruction data:
-Put the data in data folder and (bla bla bla) and run the following preprocessing commands:
+Run the following preprocessing commands:
 ```
-(Placeholder)
+python src/data/make_dataset.py
 ```
 
 
