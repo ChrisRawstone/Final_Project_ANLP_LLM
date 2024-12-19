@@ -202,3 +202,6 @@ batchscripts/NONAME_*
 huggingface_cache/
 result/
 /models_final
+/result
+/batchscripts
+/logs
