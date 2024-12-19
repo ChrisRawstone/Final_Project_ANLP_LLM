@@ -115,7 +115,7 @@ def run_training_steps(
     fp16: bool = True,
     max_grad_norm: float = 1.0,
     output_dir: str = "models/checkpoint",
-    save_steps: int = 1300,
+    save_steps: int = 100,
 ) -> None:
     """
     Runs the training loop with evaluation and wandb logging.

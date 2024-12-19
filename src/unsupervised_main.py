@@ -8,11 +8,14 @@ import os
 from datetime import datetime
 
 import torch
+from datasets import load_from_disk
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
 )
+from peft import LoraConfig, get_peft_model
+from datasets import load_from_disk
 import wandb
 wandb.login(key="83fb1d160dc4cb3bbaceadab26cba368ebced6c6")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -21,14 +24,14 @@ from utils import (
     set_seed,
     create_dataloader, 
     filter_empty_labels)
-from utils_instruction import preprocess_function
+from unsupervised_utils import unsupervised_preprocess_function
 from training import run_training_steps
 from evaluation import evaluate_scandeval
 from data.make_dataset import make_instruction_data
 from parser import get_args
 
 def main(args) -> None:
-    model_name = args.model_name
+    model_name = "Qwen/Qwen2.5-0.5B"
     batch_size = args.batch_size
     num_epochs = args.num_epochs
     learning_rate = args.learning_rate
@@ -40,11 +43,8 @@ def main(args) -> None:
     max_grad_norm = args.max_grad_norm
     num_workers = args.num_workers
     seed = args.seed
-    data_openhermes = args.data_openhermes
-    data_skolegpt = args.data_skolegpt
-    data_aya = args.data_aya
-    shuffle = args.shuffle
-    
+    LoRA = args.LoRA
+
     # ------------------------------
     # 2. Set Up Experiment
     # ------------------------------
@@ -54,7 +54,7 @@ def main(args) -> None:
     
     # Create a timestamp for the output directory and save the configuration
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-    output_dir = f"models/instruction/{timestamp}"
+    output_dir = f"models/unsupervised/{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
     # save the configuration
     with open(f"{output_dir}/config.txt", "w") as f:
@@ -70,6 +70,7 @@ def main(args) -> None:
         f.write(f"max_grad_norm: {max_grad_norm}\n")
         f.write(f"num_workers: {num_workers}\n")
         f.write(f"seed: {seed}\n")
+        f.write(f"LoRA: {LoRA}\n")
 
     # Check for GPU availability
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -78,7 +79,7 @@ def main(args) -> None:
     # Initialize wandb
     wandb.init(
         project="danish-qa-model",
-        name=f"instruction-{timestamp}",
+        name=f"unsupervised-{timestamp}",
         config={
             "model_name": model_name,
             "batch_size": batch_size,
@@ -101,7 +102,7 @@ def main(args) -> None:
     # ------------------------------
 
     # Load the tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     # Add special tokens
     special_tokens_dict = {'additional_special_tokens': ['<|user|>', '<|assistant|>', '<|end_of_turn|>']}
@@ -111,12 +112,29 @@ def main(args) -> None:
     # Load the model
     model = AutoModelForCausalLM.from_pretrained(model_name)
 
-    # Print trainable parameters
-    print(f"Trainable parameters: {model.num_parameters()}")
-
     # Resize model embeddings to accommodate new tokens
     model.resize_token_embeddings(len(tokenizer))
     print(f"Resized model embeddings to {len(tokenizer)} tokens.")
+
+    # Print trainable parameters
+    print(f"Trainable parameters: {model.num_parameters()}")
+
+    if LoRA:
+        # Define LoRA configuration
+        lora_config = LoraConfig(
+            r=8,  # Low-rank adaptation dimension
+            lora_alpha=16,  # Scaling factor
+            target_modules=["q_proj", "v_proj"],  # Target attention layers
+            lora_dropout=0.005,  # Dropout for LoRA layers
+            bias="none",  # Options: "none", "all", "lora_only"
+            task_type="CAUSAL_LM"  # Task type: Causal Language Modeling
+        )
+
+        # Apply LoRA to the model
+        model = get_peft_model(model, lora_config)
+        # Print total trainable parameters after applying LoRA
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Trainable parameters after LoRA: {trainable_params}")
 
     model.to(device)
 
@@ -128,9 +146,21 @@ def main(args) -> None:
     # 4. Load Data
     # ------------------------------
 
-    # Load the datasets from disk
-    print("Getting data...")
-    train_dataset, validation_dataset = make_instruction_data(data_openhermes=data_openhermes, data_skolegpt=data_skolegpt, data_aya=data_aya, shuffle=shuffle)
+    # # Load the datasets from disk
+    # print("Getting data...")
+    # # TODO - This is hardcoded to the bookshop dataset, make it more flexible
+    # dataset = load_from_disk("data/processed/unsupervised/bookshop/bookshop_subset_contextlength_512")
+    # # TODO - Find proper way to split this in the future
+    # # split into train and test
+    # dataset=dataset.train_test_split(test_size=0.05, seed=42)
+    # train_dataset = dataset["train"]
+    # validation_dataset = dataset["test"]
+
+    #  TODO - This is hardcoded to the bookshop dataset, make it more flexible
+    train_dataset = load_from_disk("data/processed/unsupervised/combined/combined_contextlength_512_train")
+    validation_dataset = load_from_disk("data/processed/unsupervised/combined/combined_contextlength_512_val")
+
+    #train_dataset, validation_dataset = make_instruction_data(data_openhermed=True, data_skolegpt=True, data_aya=True, shuffle=True)
 
     # Print dataset information
     print("\ntrain_dataset: \n", train_dataset)
@@ -145,7 +175,7 @@ def main(args) -> None:
     # ------------------------------
     print("\nPreprocessing the training dataset...")
     tokenized_train_dataset = small_train_dataset.map(
-        lambda examples: preprocess_function(examples, tokenizer, max_length),
+        lambda examples: unsupervised_preprocess_function(examples, tokenizer, max_length),
         batched=True,
         remove_columns=small_train_dataset.column_names)
     
@@ -157,7 +187,7 @@ def main(args) -> None:
     # Preprocess the validation dataset
     print("\nPreprocessing the validation dataset...")
     tokenized_val_dataset = validation_dataset.map(
-        lambda examples: preprocess_function(examples, tokenizer, max_length),
+        lambda examples: unsupervised_preprocess_function(examples, tokenizer, max_length),
         batched=True,
         remove_columns=validation_dataset.column_names
     )
@@ -200,13 +230,13 @@ def main(args) -> None:
     if lr_scheduler == 'linear': 
         scheduler = get_linear_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=total_steps // 10,  # 10% of total steps for warm-up
+            num_warmup_steps=350, #hardcoded to approx match the instruct tuning one
             num_training_steps=total_steps
         )
     elif lr_scheduler == 'constant': 
         scheduler = get_constant_schedule_with_warmup(
             optimizer,
-            num_warmup_steps=total_steps // 10  # 10% of total steps for warm-up
+            num_warmup_steps=350 #hardcoded to approx match the instruct tuning one
         )
     elif lr_scheduler == 'cosine':
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
@@ -242,14 +272,16 @@ def main(args) -> None:
         gradient_accumulation_steps=gradient_accumulation_steps,
         fp16=fp16,
         max_grad_norm=max_grad_norm,
-        output_dir=output_dir
+        output_dir=output_dir,
+        save_steps=500,
     )
 
     print("\nTraining script completed.")
 
     wandb.finish() # Finish the wandb run
 
-    #evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/instruction/{timestamp}")
+    #do this manually for now
+    evaluate_scandeval(MODEL_DIR=output_dir, RESULT_DIR=f"result/unsupervised/{timestamp}")
 
 if __name__ == "__main__":
     args = get_args()

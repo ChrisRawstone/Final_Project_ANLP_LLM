@@ -199,3 +199,6 @@ cython_debug/
 env-anlp/*
 data/*
 batchscripts/NONAME_*
+huggingface_cache/
+result/
+/models_final

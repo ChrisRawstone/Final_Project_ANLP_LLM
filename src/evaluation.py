@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import statistics
 import math
 from scandeval import Benchmarker
-
+import argparse
 
 
 def get_sorted_model_paths(model_dir):
@@ -296,13 +296,32 @@ def evaluate_scandeval(MODEL_DIR, RESULT_DIR, CSV_FILENAME = "evaluation_results
     # After all evaluations, plot the results
     plot_results(csv_path, plot_path)
 
-if __name__ == "__main__":
-    # Constants
-    timestamp = "20241202200154"
 
-    #MODEL_DIR = f"models/instruction/{timestamp}"
-    #RESULT_DIR = f"result/instruction/{timestamp}"
-    
-    MODEL_DIR = "models_final/instruction_final"
-    RESULT_DIR = "result/instruction/final"
+
+
+if __name__ == "__main__":
+    # Argument parser
+    parser = argparse.ArgumentParser(description="Evaluate Scandeval model and save results.")
+    parser.add_argument(
+        "--model_dir",
+        type=str,
+        default="models_final/Instruction/best_model_pretrain_christian",
+        help="Path to the model directory."
+    )
+    parser.add_argument(
+        "--result_dir",
+        type=str,
+        default="models_final/Instruction/best_model_pretrain_christian",
+        help="Path to save the evaluation results."
+    )
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Constants
+    MODEL_DIR = args.model_dir
+    RESULT_DIR = args.result_dir
+
+    # Call the evaluation function
     evaluate_scandeval(MODEL_DIR, RESULT_DIR)
+

@@ -6,7 +6,7 @@ from transformers import PreTrainedTokenizer
 # Configure the logger
 logger = logging.getLogger(__name__)
 
-def preprocess_function(
+def unsupervised_preprocess_function(
     examples: Dict[str, List[str]],
     tokenizer: PreTrainedTokenizer,
     max_length: int = 256,
@@ -28,22 +28,24 @@ def preprocess_function(
     assistant_token_id = tokenizer.convert_tokens_to_ids("<|assistant|>")
     missing_assistant_token = 0
 
-    for instruction, input_text, output_text in zip(
-        examples.get("instructions", [""] * len(examples["inputs"])),
-        examples["inputs"],
-        examples["outputs"],
-    ):
+    for text in examples["text"]:  
+
+    # for instruction, input_text, output_text in zip(
+    #     examples.get("instructions", [""] * len(examples["inputs"])),
+    #     examples["inputs"],
+    #     examples["outputs"],
+    # ):
         # Construct the prompt
-        user_prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|>"
-        assistant_prompt = f"<|assistant|>{output_text}<|end_of_turn|>"
-        prompt = f"{user_prompt}{assistant_prompt}"
+        #user_prompt = f"<|user|>{instruction}\n{input_text}<|end_of_turn|>"
+        #assistant_prompt = f"<|assistant|>{output_text}<|end_of_turn|>"
+        prompt = f"<|assistant|>{text}<|end_of_turn|>"
 
         # Tokenize the prompt
         tokenized = tokenizer(
             prompt,
             truncation=True,
             max_length=max_length,
-            padding='max_length',
+            padding=False,
             return_attention_mask=True,
         )
         input_ids = tokenized["input_ids"]
