@@ -2,7 +2,7 @@
 #BSUB -J Evaluate
 #BSUB -o logs/Eval%J.out
 #BSUB -e logs/Eval%J.err
-#BSUB -q gpuv100
+#BSUB -q gpua100
 #BSUB -gpu "num=1:mode=exclusive_process"
 #BSUB -n 16
 #BSUB -R "span[hosts=1]"
@@ -18,6 +18,6 @@ module load cuda/11.8
 
 source venv/bin/activate
 
-python src/eval_scand_final.py --dataset scala-da
+python src/evaluation.py --model_dir models_final/Instruction/best_model_pretrain_christian --result_dir models_final/Instruction/best_model_pretrain_christian
 
 #["nordjylland-news", "scandiqa-da", "scala-da"]
